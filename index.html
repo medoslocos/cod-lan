@@ -645,7 +645,9 @@ function vSaisie() {
       ${d.thumb ? `<div class="panel"><img src="${d.thumb}" class="thumb" alt="Photo du tableau des scores"></div>` : ''}
       <div class="panel grid">
         <div><label class="lbl" for="dr-map">Map</label><select id="dr-map" data-a="dr-map">${[...new Set([d.map, ...S.roster.maps])].map(m => `<option value="${esc(m)}" ${m === d.map ? 'selected' : ''}>${esc(m)}${S.roster.maps.includes(m) ? '' : ' (nouvelle map)'}</option>`).join('')}</select>
-          ${d.mapRead ? `<div class="muted" style="font-size:12px;margin-top:4px">Lu sur la photo : ${esc(d.mapRead)}</div>` : ''}</div>
+          ${!S.roster.maps.includes(d.map)
+            ? `<div class="notice" style="font-size:13px;margin-top:6px">🆕 <b>${esc(d.map)}</b> n’est pas encore dans la liste : elle sera <b>ajoutée automatiquement</b> quand tu valides la manche. Si l’IA s’est trompée, choisis la bonne map dans le menu ci-dessus.</div>`
+            : d.mapRead ? `<div class="muted" style="font-size:12px;margin-top:4px">Lu sur la photo : ${esc(d.mapRead)}</div>` : ''}</div>
         <div><span class="lbl">Équipe gagnante</span><div class="seg"><button class="${d.winner === 1 ? 'on1' : ''}" data-a="dr-win" data-v="1">Équipe 1</button><button class="${d.winner === 2 ? 'on2' : ''}" data-a="dr-win" data-v="2">Équipe 2</button></div></div>
         ${balanceLine(d.players, d.bots)}
         <div class="row" style="gap:6px;font-size:13px"><span class="muted">Bots :</span>
@@ -1084,7 +1086,7 @@ document.addEventListener('change', e => {
   switch (a) {
     case 'photo': { const f = el.files && el.files[0]; el.value = ''; handlePhoto(f); break; }
     case 'dr-name': U.draft.players[+el.dataset.k].name = el.value; render(); break;
-    case 'dr-map': U.draft.map = el.value; break;
+    case 'dr-map': U.draft.map = el.value; render(); break;
     case 'dr-ok8': U.draft.ok8 = el.checked; break;
     case 'set-alias': {
       if (!isAdmin()) return;
