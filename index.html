@@ -234,6 +234,14 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .blocker{border:1px solid var(--t2);background:var(--t2-soft);color:var(--fg);border-radius:10px;padding:10px 12px;font-weight:700;font-size:14px}
 .update{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:22;max-width:calc(100% - 32px);
   border:0;border-radius:999px;background:var(--gold);color:#111;font-weight:800;padding:12px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5);cursor:pointer}
+.picker{display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(64px,1fr))}
+.pick{display:grid;justify-items:center;gap:2px;padding:6px 2px;border:1px solid var(--line);border-radius:10px;background:var(--panel);cursor:pointer;min-width:0}
+.pick img{width:44px;height:44px;object-fit:contain}
+.pick-emo{font-size:32px;line-height:44px;height:44px}
+.pick-n{font-size:11px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.pick.on{border-color:var(--red);background:var(--red-soft);box-shadow:0 0 0 1px var(--red) inset}
+.pick.on .pick-n{color:var(--fg)}
+@media (prefers-reduced-motion:no-preference){.pick{transition:transform .15s}.pick.on{transform:scale(1.06)}.pick:active{transform:scale(.94)}}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -755,7 +763,7 @@ function vSaisie() {
     <button class="btn ghost sm" data-a="dr-cancel">Annuler</button>
   </div>`;
   const warn = gapWarning(d), dup = duplicateOf(d);
-  const names = playerNames();
+  const names = [...playerNames()].sort((x, y) => x.localeCompare(y, 'fr', {sensitivity: 'base'}));
   const rows = d.players.map((p, i) => `<div class="prow t${p.team} ${p.name ? '' : 'unknown'}">
     <div class="prow-head" style="flex-wrap:wrap">
       <select id="dr-name-${i}" data-a="dr-name" data-k="${i}" style="flex:1;width:auto;min-width:150px">${['<option value="">— Qui est-ce ? —</option>', ...names.map(x => `<option ${x === p.name ? 'selected' : ''} value="${esc(x)}">${label(x)}</option>`)].join('')}</select>
@@ -868,13 +876,14 @@ function playerSelect(id, value, list) {
 }
 
 function vJoueur() {
-  const names = [...new Set([...playerNames(), ...S.rounds.flatMap(r => r.players.map(p => p.name))])];
+  const names = [...new Set([...playerNames(), ...S.rounds.flatMap(r => r.players.map(p => p.name))])]
+    .sort((a, b) => a.localeCompare(b, 'fr', {sensitivity: 'base'}));
   if (!U.selPlayer || !names.includes(U.selPlayer)) U.selPlayer = names.includes(U.me) ? U.me : names[0];
   const {list} = compute(S.rounds);
   const s = list.find(x => x.name === U.selPlayer);
-  const head = `<div class="panel row" style="flex-wrap:nowrap;gap:12px">
-    <button type="button" class="squad-card" style="padding:6px;flex:none" data-a="pl" data-k="${esc(U.selPlayer)}" aria-label="Fiche de ${esc(U.selPlayer)}">${stickers[U.selPlayer] ? `<img src="${stickers[U.selPlayer]}" alt="">` : `<span class="squad-emo">${esc(emojiOf(U.selPlayer))}</span>`}</button>
-    <div style="flex:1;min-width:0"><label class="lbl" for="sel-player">Joueur</label>${playerSelect('sel-player', U.selPlayer, names)}</div></div>`;
+  // Sélecteur en grille de stickers (une liste déroulante ne peut pas afficher d'images), ordre alphabétique
+  const head = `<div class="picker" role="listbox" aria-label="Choisir un joueur">${names.map(n => `<button type="button" role="option" aria-selected="${n === U.selPlayer}" class="pick${n === U.selPlayer ? ' on' : ''}" data-a="pick-player" data-k="${esc(n)}">${stickers[n] ? `<img src="${stickers[n]}" alt="">` : `<span class="pick-emo">${esc(emojiOf(n))}</span>`}<span class="pick-n">${esc(n)}</span></button>`).join('')}</div>
+  <h2 class="sec" style="margin-top:18px">${esc(U.selPlayer)} <span>touche son sticker pour la fiche animée</span></h2>`;
   if (!s) return head + `<div class="emptystate" style="margin-top:12px"><b>Pas encore joué</b>${esc(U.selPlayer)} n’apparaît dans aucune game validée.</div>`;
   const partners = Object.entries(s.partners).map(([name, v]) => ({name, n: v.n, w: v.w})).sort((a, b) => b.n - a.n || b.w - a.w);
   const maps = Object.entries(s.maps).map(([n, v]) => ({n, ...v, avg: v.points / v.m})).sort((a, b) => b.w - a.w || a.l - b.l);
@@ -1149,6 +1158,7 @@ document.addEventListener('click', e => {
     case 'dr-step': { const p = U.draft.players[+k], f = b.dataset.f; p[f] = Math.max(0, (+p[f] || 0) + (+b.dataset.d)); render(); break; }
     case 'dr-save': saveDraft(); break;
     case 'pl': showPlayer(k); break;
+    case 'pick-player': if (U.selPlayer === k) showPlayer(k); else { U.selPlayer = k; render(); } break;
     case 'pl-close': closePop(); break;
     case 'pl-open': closePop(); U.selPlayer = k; U.tab = 'joueur'; render(); window.scrollTo({top: 0}); break;
     case 'stk-rm': if (isAdmin()) { delete stickers[k]; render(); write('config/sticker_' + slug(k), d => d.delete()).then(() => toast('Sticker retiré')); } break;
@@ -1401,7 +1411,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-154220';
+const APP_VERSION = '20261022-160617';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
