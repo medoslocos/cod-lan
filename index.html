@@ -251,6 +251,33 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .legend{display:flex;gap:10px;align-items:center;margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:13px;color:var(--muted)}
 .legend b{color:var(--fg)}
 .legend-bar{flex:none;width:34px;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--red) 40%,var(--line) 40%)}
+.gen{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.gen-row{display:grid;grid-template-columns:28px 52px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.gen-row.top1{border-color:rgba(242,182,50,.7);background:linear-gradient(135deg,rgba(242,182,50,.18),var(--panel) 65%)}
+.gen-row.top2{border-color:rgba(200,210,220,.5)}
+.gen-row.top3{border-color:rgba(205,127,50,.55)}
+.gen-row.prov{opacity:.62}
+.gpos{font-family:var(--f-display);font-size:28px;font-weight:700;text-align:center;color:var(--muted)}
+.gen-row.top1 .gpos{color:var(--gold)}
+.gface{width:52px;height:52px;padding:0;border:0;background:none;cursor:pointer;display:grid;place-items:center}
+.gface img{width:52px;height:52px;object-fit:contain}
+.gface span{font-size:36px}
+.gmid{min-width:0;display:grid;gap:4px}
+.gname{font-family:var(--f-display);font-size:24px;font-weight:600;line-height:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gname .plink{font-family:inherit}
+.gbar{height:4px;border-radius:2px;background:linear-gradient(90deg,var(--red) var(--part,0%),var(--line) var(--part,0%))}
+.gsub{font-size:11px;color:var(--muted);line-height:1.35}
+.gsub b{color:var(--fg)}
+.gscore{font-family:var(--f-display);font-size:38px;font-weight:700;line-height:.9;text-align:right}
+.gscore small{font-family:var(--f-body);font-size:11px;color:var(--muted);font-weight:700;margin-left:2px}
+.gen-row.top1 .gscore{color:var(--gold)}
+.gen-label{margin:16px 0 8px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.how{margin-top:16px;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--panel);font-size:14px}
+.how summary{cursor:pointer;font-weight:700}
+.how ul{margin:6px 0;padding-left:18px;display:grid;gap:3px}
+.how p{margin:8px 0 0;color:var(--muted)}
+.how b{color:var(--fg)}
+@media (max-width:420px){.gen-row{grid-template-columns:22px 44px minmax(0,1fr) auto;gap:8px;padding:8px 10px}.gface,.gface img{width:44px;height:44px}.gscore{font-size:32px}.gname{font-size:21px}}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -490,6 +517,8 @@ function compute(rounds) {
       STATS.forEach(({f}) => s[f] += (+p[f] || 0));
       const mine = size[p.team], theirs = size[3 - p.team];
       mine > theirs ? s.sup++ : mine < theirs ? s.inf++ : s.eq++;
+      if (won && mine < theirs) s.wInf = (s.wInf || 0) + 1;      // gagner en sous-nombre vaut plus
+      if (!won && mine > theirs) s.lSup = (s.lSup || 0) + 1;     // perdre en surnombre coûte plus
       r.players.filter(q => q.team === p.team && q.name !== p.name).forEach(q => {
         const pt = s.partners[q.name] || (s.partners[q.name] = {n:0, w:0}); pt.n++; if (won) pt.w++;
       });
@@ -503,7 +532,11 @@ function compute(rounds) {
      Peu de games => tiré vers la moyenne ; beaucoup de games => quasi la vraie moyenne. */
   const tot = list.reduce((a, s) => a + s.m, 0) || 1;
   STATS.forEach(({f}) => { const mean = list.reduce((a, s) => a + s[f], 0) / tot; list.forEach(s => s['adj_' + f] = (s[f] + FAIR_K * mean) / (s.m + FAIR_K)); });
-  list.forEach(s => s.wr_adj = (s.w + FAIR_K * 0.5) / (s.m + FAIR_K));
+  list.forEach(s => {
+    s.wr_adj = (s.w + FAIR_K * 0.5) / (s.m + FAIR_K);
+    const wi = 0.5 * (s.wInf || 0), ls = 0.5 * (s.lSup || 0);
+    s.wr_fair = (s.w + wi + FAIR_K * 0.5) / (s.m + wi + ls + FAIR_K);
+  });
   const minGames = Math.max(1, Math.ceil(rounds.length * 0.3));
   list.forEach(s => s.ok = s.m >= minGames);
   return {list, duos: Object.values(duos), minGames};
@@ -834,7 +867,60 @@ function quatuor(list) {
   return out;
 }
 
+/* ---------- Classement général (indice équitable /100) ----------
+   Chaque stat est prise PAR GAME et ajustée (3 games « fantômes » à la moyenne du groupe),
+   donc jouer plus ne gonfle pas le score. Pondération : points 35 %, kills 25 %, victoires 25 %, objectif 15 %.
+   Points / kills / objectif sont comparés au meilleur du groupe ; victoires = % ajusté (gagner en sous-nombre compte plus). */
+const IDX_W = {p: 0.35, k: 0.25, w: 0.25, o: 0.15};
+function globalIndex(list) {
+  const pl = list.filter(s => s.m > 0);
+  pl.forEach(s => { s.adj_obj = s.adj_poses + s.adj_desam; s.avg_obj = s.avg_poses + s.avg_desam; });
+  const best = k => Math.max(1e-9, ...pl.map(s => s[k]));
+  const bp = best('adj_points'), bk = best('adj_kills'), bo = best('adj_obj');
+  pl.forEach(s => {
+    s.c = {p: s.adj_points / bp, k: s.adj_kills / bk, w: s.wr_fair, o: s.adj_obj / bo};
+    s.idx = 100 * (IDX_W.p * s.c.p + IDX_W.k * s.c.k + IDX_W.w * s.c.w + IDX_W.o * s.c.o);
+  });
+  return pl;
+}
 function vClassement() {
+  return U.rankDetail
+    ? `<button class="btn ghost" data-a="rank-general" style="margin-top:4px">← Classement général</button>` + vClassementDetail()
+    : vGeneral();
+}
+function vGeneral() {
+  const {list, minGames} = compute(S.rounds), N = S.rounds.length;
+  const pl = globalIndex(list);
+  const ok = pl.filter(s => s.ok).sort((a, b) => b.idx - a.idx || b.m - a.m);
+  const prov = pl.filter(s => !s.ok).sort((a, b) => b.idx - a.idx);
+  const absent = playerNames().filter(n => !pl.some(s => s.name === n));
+  const medal = i => ['🥇', '🥈', '🥉'][i] || '';
+  const face = n => `<button type="button" class="gface" data-a="pl" data-k="${esc(n)}" aria-label="Fiche de ${esc(n)}">${stickers[n] ? `<img src="${stickers[n]}" alt="">` : `<span>${esc(emojiOf(n))}</span>`}</button>`;
+  const row = (s, i, provisional) => {
+    const last = !provisional && ok.length >= 3 && i === ok.length - 1;
+    const part = N ? Math.round(100 * s.m / N) : 0;
+    return `<li class="gen-row${provisional ? ' prov' : ''}${!provisional && i < 3 ? ' top' + (i + 1) : ''}">
+      <span class="gpos num">${provisional ? '⏳' : i + 1}</span>
+      ${face(s.name)}
+      <div class="gmid"><div class="gname"><button type="button" class="plink" data-a="pl" data-k="${esc(s.name)}">${esc(s.name)}</button> ${provisional ? '' : medal(i)}${last ? ' 👨‍🦲' : ''}</div>
+        <div class="gbar" style="--part:${part}%" title="${s.m}/${N} games jouées"></div>
+        <div class="gsub num">${Math.round(s.avg_points)} pts/g · ${fr1(s.avg_kills)} K/g · ${pct(s.wr)} vic · ${fr1(s.avg_obj)} obj/g · <b>${s.m}/${N} g.</b></div></div>
+      <div class="gscore num">${Math.round(s.idx)}<small>/100</small></div></li>`;
+  };
+  return `<h2 class="sec">Classement général <span>équitable · ${N} game${N > 1 ? 's' : ''}</span></h2>
+  ${N ? `<ol class="gen">${ok.map((s, i) => row(s, i, false)).join('')}</ol>
+  ${prov.length ? `<div class="gen-label">⏳ Provisoire · moins de ${minGames} game${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''}</div><ol class="gen">${prov.map((s, i) => row(s, i, true)).join('')}</ol>` : ''}`
+    : `<div class="notice">Aucune game pour l’instant : le classement se remplira dès la première photo validée.</div>`}
+  ${absent.length ? `<div class="gen-label">Pas encore joué</div><div class="chips">${absent.map(n => `<span class="chip">${plink(n)}</span>`).join('')}</div>` : ''}
+  <details class="how"><summary>Comment le score est calculé ?</summary>
+    <p>Un score sur 100 qui ne dépend pas du nombre de games jouées : tout est calculé <b>par game</b>.</p>
+    <ul><li><b>Points</b> par game : 35 %</li><li><b>Kills</b> par game : 25 %</li><li><b>% de victoires</b> : 25 % (gagner en sous-nombre compte plus, perdre en surnombre coûte plus)</li><li><b>Objectif</b> (poses + désamorçages) par game : 15 %</li></ul>
+    <p>Points, kills et objectif sont comparés au meilleur du groupe. Chacun part avec ${FAIR_K} games « fantômes » à la moyenne du groupe : 2 grosses games ne suffisent pas pour passer n°1, il faut confirmer. Moins de ${minGames} game${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 %) = classement provisoire.</p>
+    <p>La barre rouge montre la part des games jouées.</p>
+  </details>
+  <button class="btn primary block" data-a="rank-detail" style="margin-top:14px">📊 Voir tous les classements détaillés</button>`;
+}
+function vClassementDetail() {
   const {list, duos, minGames} = compute(S.rounds);
   RANK_N = S.rounds.length; RANK_MIN = minGames;
   // Tout l'effectif apparaît, même à 0 : chaque nom reste cliquable dès le début
@@ -1205,7 +1291,9 @@ document.addEventListener('click', e => {
   const a = b.dataset.a, k = b.dataset.k, v = b.dataset.v;
   const cur = S.current;
   switch (a) {
-    case 'tab': U.tab = v; U.confirm = null; lsSet('codlan.tab', v); render(); window.scrollTo({top: 0}); break;
+    case 'rank-detail': U.rankDetail = true; render(); window.scrollTo({top: 0}); break;
+    case 'rank-general': U.rankDetail = false; render(); window.scrollTo({top: 0}); break;
+    case 'tab': if (v === 'classement') U.rankDetail = false; U.tab = v; U.confirm = null; lsSet('codlan.tab', v); render(); window.scrollTo({top: 0}); break;
     case 'cancel': U.confirm = null; render(); break;
     case 'dr-cancel': U.draft = null; render(); break;
     case 'dr-win': U.draft.winner = +v; render(); break;
@@ -1479,7 +1567,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-165505';
+const APP_VERSION = '20261022-171820';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
