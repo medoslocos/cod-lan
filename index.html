@@ -1218,7 +1218,6 @@ document.addEventListener('click', e => {
       break;
     }
     case 'snd-play':
-      if (!soundOn) { soundOn = true; lsSet('codlan.sound', '1'); renderSound(); }
       unlock(); celebrate({n: 'test', map: 'Highrise', winner: 1, players: []}); break;
     case 'snd-reset': soundDoc = null; victoryBuf = null; render(); write('config/sound', d => d.delete()); break;
     case 'map-rm': if (S.roster.maps.length > 1) saveRoster({...S.roster, maps: S.roster.maps.filter(m => m !== k)}); else toast('Garde au moins une map'); break;
@@ -1271,21 +1270,21 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- Son & écran de victoire ---------- */
-let actx = null, soundOn = lsGet('codlan.sound') === '1', soundDoc = null, victoryBuf = null, victoryKey = '', curSrc = null, vTimer;
-const ctx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
+let actx = null, soundOn = true, soundDoc = null, victoryBuf = null, victoryKey = '', curSrc = null, vTimer;
+const ctx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) { actx = new C(); actx.onstatechange = () => renderSound(); } } return actx; };
 function unlock() {
   const c = ctx(); if (!c) return;
   if (c.state === 'suspended') c.resume();
   const s = c.createBufferSource(); s.buffer = c.createBuffer(1, 1, 22050); s.connect(c.destination); s.start(0);
 }
-document.addEventListener('pointerdown', () => { if (soundOn) unlock(); }, {once: true});
-function renderSound() { const b = $('#sound'); b.className = 'sound' + (soundOn ? ' on' : ''); b.textContent = soundOn ? '🔊 Son activé' : '🔇 Son coupé'; }
-$('#sound').addEventListener('click', () => {
-  soundOn = !soundOn; lsSet('codlan.sound', soundOn ? '1' : '0');
-  if (soundOn) { unlock(); toast('Son activé : musique à chaque victoire'); }
-  else stopVictory();
-  renderSound();
-});
+// Son toujours actif, impossible à couper. Les navigateurs exigent un premier geste pour jouer du son :
+// on « débloque » l'audio à chaque toucher tant qu'il n'est pas actif (iOS : touchend/click).
+['pointerdown', 'touchend', 'click', 'keydown'].forEach(t => document.addEventListener(t, () => { if (!actx || actx.state !== 'running') unlock(); renderSound(); }, {passive: true}));
+function renderSound() {
+  const b = $('#sound'), ready = actx && actx.state === 'running';
+  b.className = 'sound on'; b.textContent = ready ? '🔊 Son activé' : '🔊 Touche l’écran pour le son';
+}
+$('#sound').addEventListener('click', () => { unlock(); setTimeout(renderSound, 150); });
 const b64ToBuf = b64 => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 const bufToB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 const decode = ab => new Promise((res, rej) => { const p = ctx().decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
@@ -1378,7 +1377,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-145528';
+const APP_VERSION = '20261022-150043';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
