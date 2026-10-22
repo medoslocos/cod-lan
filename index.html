@@ -945,7 +945,7 @@ function vManches() {
       <div class="teams">${[1, 2].map(t => `<div class="team t${t}"><div class="win t${t}" style="margin-bottom:4px">Équipe ${t} · ${size[t]} joueur${size[t] > 1 ? 's' : ''}${r.winner === t ? ' · 🏆' : ''}</div>${teamTable(r.players.filter(p => p.team === t))}</div>`).join('')}</div>
       <div class="row" style="margin-top:10px">
         ${U.confirm === 'del:' + r.id
-          ? `<span class="muted">Supprimer la manche #${r.n} ?</span><button class="btn sm danger" data-a="r-del-ok" data-k="${esc(r.id)}">Oui, supprimer</button><button class="btn sm ghost" data-a="cancel">Annuler</button>`
+          ? `<span class="muted">Supprimer la manche #${r.n} ?</span>${isAdmin() ? '' : `<input id="del-code" type="password" inputmode="numeric" autocomplete="off" placeholder="Code admin" style="width:130px;min-height:34px;padding:4px 8px" aria-label="Code admin">`}<button class="btn sm danger" data-a="r-del-ok" data-k="${esc(r.id)}">Oui, supprimer</button><button class="btn sm ghost" data-a="cancel">Annuler</button>`
           : `<button class="btn sm" data-a="r-edit" data-k="${esc(r.id)}">Modifier</button><button class="btn sm danger" data-a="r-del" data-k="${esc(r.id)}">Supprimer</button>`}
       </div></div>`;
   }).join('')}</div>`;
@@ -1129,7 +1129,17 @@ document.addEventListener('click', e => {
     case 'pick-map': U.selMap = k; render(); break;
     case 'r-edit': { const r = S.rounds.find(x => x.id === k); U.edit = JSON.parse(JSON.stringify(r)); U.confirm = null; render(); break; }
     case 'r-del': U.confirm = 'del:' + k; render(); break;
-    case 'r-del-ok': U.confirm = null; S.rounds = S.rounds.filter(r => r.id !== k); render(); write('rounds/' + k, d => d.delete()).then(() => toast('Manche supprimée')); break;
+    case 'r-del-ok': {
+      const del = () => { U.confirm = null; S.rounds = S.rounds.filter(r => r.id !== k); render(); write('rounds/' + k, d => d.delete()).then(() => toast('Manche supprimée')); };
+      if (isAdmin()) { del(); break; }
+      if (!adminLoaded) return toast('Connexion à la base, réessaie');
+      const inp = $('#del-code');
+      sha256(inp ? inp.value.trim() : '').then(h => {
+        if (h === adminHash) { ssSet('codlan.admin', h); del(); }
+        else { toast('Code incorrect : suppression réservée à l’admin'); if (inp) inp.value = ''; }
+      });
+      break;
+    }
     case 'e-win': U.edit.winner = +v; render(); break;
     case 'e-team': { const p = U.edit.players[+k]; p.team = 3 - p.team; render(); break; }
     case 'e-rm': U.edit.players.splice(+k, 1); render(); break;
