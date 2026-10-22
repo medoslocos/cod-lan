@@ -242,6 +242,9 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .pick.on{border-color:var(--red);background:var(--red-soft);box-shadow:0 0 0 1px var(--red) inset}
 .pick.on .pick-n{color:var(--fg)}
 @media (prefers-reduced-motion:no-preference){.pick{transition:transform .15s}.pick.on{transform:scale(1.06)}.pick:active{transform:scale(.94)}}
+.rules ul{margin:6px 0 0;padding-left:18px;display:grid;gap:3px;font-size:14px}
+.rules .lockline{margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(242,182,50,.12);border:1px solid rgba(242,182,50,.45);font-size:13px;font-weight:600}
+.btn:disabled{opacity:.55;cursor:not-allowed}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -992,7 +995,16 @@ function vTirage() {
   if (!U.drawSel) U.drawSel = new Set(S.current.lineup.length ? S.current.lineup.map(l => l.name) : names);
   const d = S.draw;
   const n = [...U.drawSel].filter(x => names.includes(x)).length;
-  return `<h2 class="sec">Joueurs présents <span>${n} sélectionné${n > 1 ? 's' : ''}</span></h2>
+  const tl = teamsLockedIn(d), ml = mapLockedIn(d);
+  const when = t => t ? new Date(t).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'}) : '';
+  return `<div class="panel rules"><b>📜 Règles du tirage</b>
+    <ul><li><b>1 seul tirage</b> à la fois, pour tout le monde, peu importe qui le lance</li>
+      <li><b>Verrouillé</b> jusqu’à la photo de fin de game</li>
+      <li><b>Visible par tous</b>, en direct</li>
+      <li>Game plantée (problème de co) : seul l’<b>admin</b> peut relancer, avec le code</li></ul>
+    ${tl || ml ? `<div class="lockline">🔒 Tirage en cours${tl ? ` · équipes tirées à ${when(d.at)}` : ''}${ml ? ` · map tirée à ${when(d.mapAt || d.at)}` : ''}. Il se libère dès que la photo de fin de game est validée.</div>` : ''}
+  </div>
+  <h2 class="sec">Joueurs présents <span>${n} sélectionné${n > 1 ? 's' : ''}</span></h2>
   <div class="panel grid">
     <div class="chips">${names.map(x => `<button class="chip ${U.drawSel.has(x) ? 'on' : ''}" data-a="d-sel" data-k="${esc(x)}">${label(x)}</button>`).join('')}</div>
     <div class="chips">
@@ -1000,7 +1012,10 @@ function vTirage() {
       <button class="chip ${U.drawOdd === 'bot' ? 'on' : ''}" data-a="d-odd" data-v="bot">🤖 Si impair : un bot</button>
       <button class="chip ${U.drawOdd === 'spec' ? 'on' : ''}" data-a="d-odd" data-v="spec">👀 Si impair : un spectateur</button>
     </div>
-    <div class="row"><button class="btn primary" data-a="d-teams">Tirer les équipes</button><button class="btn" data-a="d-map">🎲 Tirer une map</button></div>
+    <div class="row"><button class="btn primary" data-a="d-teams" ${tl ? 'disabled' : ''}>${tl ? '🔒 Équipes déjà tirées' : 'Tirer les équipes'}</button><button class="btn" data-a="d-map" ${ml ? 'disabled' : ''}>${ml ? '🔒 Map déjà tirée' : '🎲 Tirer une map'}</button></div>
+    ${tl || ml ? `<div class="row" style="gap:8px">${U.confirm === 'dreset'
+      ? `${isAdmin() ? '' : `<input id="dreset-code" type="password" inputmode="numeric" autocomplete="off" placeholder="Code admin" style="width:140px;min-height:38px;padding:6px 10px" aria-label="Code admin">`}<button class="btn sm danger" data-a="d-reset-ok">Annuler le tirage</button><button class="btn sm ghost" data-a="cancel">Retour</button>`
+      : `<button class="btn sm ghost" data-a="d-reset">🔓 Game plantée ? Relancer le tirage (admin)</button>`}</div>` : ''}
   </div>
   ${d && (d.t1 || d.map) ? `<h2 class="sec">Résultat du tirage <span>visible par tout le monde</span></h2>
   <div class="grid">
@@ -1114,18 +1129,43 @@ function drawTeams() {
     t1 = pick.a; t2 = pick.b;
   } else { t1 = names.slice(0, half); t2 = names.slice(half); }
   const bot = botNeeded ? (t1.length < t2.length ? 1 : 2) : 0;
-  const draw = {...(S.draw || {}), t1, t2, spectator, bot, at: Date.now()};
-  S.draw = draw; render();
-  write('live/draw', d => d.set(draw));
+  guardedDraw(cur => {
+    const keepMap = cur && cur.map && !drawConsumed(cur.mapAt || cur.at || 0);
+    return {...(keepMap ? {map: cur.map, mapAt: cur.mapAt || cur.at} : {}), t1, t2, spectator, bot, at: Date.now()};
+  }, teamsLockedIn, 'Les équipes sont déjà tirées');
 }
 function drawMap() {
   const last = [...S.rounds].sort((a, b) => b.createdAt - a.createdAt)[0];
   let pool = S.roster.maps.filter(m => !last || m !== last.map);
   if (!pool.length) pool = S.roster.maps;
   if (!pool.length) return toast('Ajoute des maps dans Réglages');
-  const draw = {...(S.draw || {}), map: pool[Math.floor(Math.random() * pool.length)], at: Date.now()};
-  S.draw = draw; render();
-  write('live/draw', d => d.set(draw));
+  const map = pool[Math.floor(Math.random() * pool.length)];
+  guardedDraw(cur => ({...(cur && cur.t1 && !drawConsumed(cur.at || 0) ? cur : {}), map, mapAt: Date.now()}), mapLockedIn, 'La map est déjà tirée');
+}
+/* ---------- Règles du tirage ----------
+   1 seul tirage à la fois pour tout le monde, verrouillé jusqu'à la photo de fin de game
+   (une game validée après le tirage le « consomme »), visible par tous, relance réservée à l'admin. */
+const drawConsumed = at => S.rounds.some(r => (r.createdAt || 0) > at);
+const teamsLockedIn = d => !!(d && d.t1 && !drawConsumed(d.at || 0));
+const mapLockedIn = d => !!(d && d.map && !drawConsumed(d.mapAt || d.at || 0));
+async function guardedDraw(build, isLocked, lockedMsg) {
+  const msg = lockedMsg + ' : verrouillé jusqu’à la photo de fin de game (l’admin peut relancer).';
+  if (mode === 'firebase' && store.runTransaction) {
+    try {
+      const ref = store.doc('live/draw');
+      const next = await store.runTransaction(async tx => {
+        const snap = await tx.get(ref), cur = snap.exists ? snap.data() : null;
+        if (isLocked(cur)) return null;
+        const n = build(cur); tx.set(ref, n); return n;
+      });
+      if (!next) return toast(msg);
+      S.draw = next; render();
+    } catch (e) { toast('Tirage impossible, vérifie ta connexion et réessaie'); }
+    return;
+  }
+  if (isLocked(S.draw)) return toast(msg);
+  const next = build(S.draw); S.draw = next; render();
+  write('live/draw', d => d.set(next));
 }
 
 async function validate() {
@@ -1193,6 +1233,18 @@ document.addEventListener('click', e => {
     case 'd-bal': U.drawBal = !U.drawBal; render(); break;
     case 'd-odd': U.drawOdd = U.drawOdd === v ? 'none' : v; render(); break;
     case 'd-teams': drawTeams(); break;
+    case 'd-reset': U.confirm = 'dreset'; render(); break;
+    case 'd-reset-ok': {
+      const reset = () => { U.confirm = null; S.draw = null; render(); write('live/draw', d => d.delete()).then(() => toast('Tirage annulé : vous pouvez relancer')); };
+      if (isAdmin()) { reset(); break; }
+      if (!adminLoaded) return toast('Connexion à la base, réessaie');
+      const inp = $('#dreset-code');
+      sha256(inp ? inp.value.trim() : '').then(h => {
+        if (h === adminHash) { ssSet('codlan.admin', h); reset(); }
+        else { toast('Code incorrect : relance réservée à l’admin'); if (inp) inp.value = ''; }
+      });
+      break;
+    }
     case 'd-map': drawMap(); break;
     case 'd-use': {
       U.tab = 'saisie'; render(); window.scrollTo({top: 0}); break;
@@ -1411,7 +1463,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-160617';
+const APP_VERSION = '20261022-161724';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
