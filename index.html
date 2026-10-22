@@ -208,8 +208,32 @@ html,body{margin:0}
 .plink.big .av{width:40px;height:40px}
 .pop{position:fixed;inset:0;z-index:25;display:grid;place-items:center;padding:16px;background:rgba(5,7,9,.82)}
 .pop-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:grid;gap:10px;justify-items:center;text-align:center;width:min(100%,360px)}
-.pop-stk{width:min(70vw,240px);height:min(70vw,240px);object-fit:contain}
-.pop-emoji{font-size:110px;line-height:1}
+.pop-card{overflow:hidden}
+.pop-stage{position:relative;width:min(70vw,250px);height:min(70vw,250px);display:grid;place-items:center}
+.pop-rays{position:absolute;inset:-40%;background:repeating-conic-gradient(from 0deg,rgba(229,50,45,.28) 0 10deg,transparent 10deg 20deg);
+  -webkit-mask:radial-gradient(circle,#000 25%,transparent 62%);mask:radial-gradient(circle,#000 25%,transparent 62%)}
+.pop-stk{position:relative;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 10px 18px rgba(0,0,0,.55))}
+.pop-emoji{font-size:min(36vw,140px);line-height:1;display:grid;place-items:center}
+@media (prefers-reduced-motion:no-preference){
+  .pop{animation:popfade .2s ease-out both}
+  .pop-card{animation:popcard .35s cubic-bezier(.2,1.3,.4,1) both}
+  .pop-rays{animation:rays 9s linear infinite}
+  .pop-stk{animation:rise .75s .08s cubic-bezier(.18,1.5,.4,1) both, wobble 2.4s 1s ease-in-out infinite}
+  .pop-name{animation:slam .45s .45s cubic-bezier(.2,1.6,.4,1) both}
+  @keyframes popfade{from{opacity:0}to{opacity:1}}
+  @keyframes popcard{from{transform:scale(.85);opacity:0}to{transform:none;opacity:1}}
+  @keyframes rays{to{transform:rotate(360deg)}}
+  @keyframes rise{0%{transform:translateY(140%) scale(.4) rotate(-18deg);opacity:0}60%{opacity:1}100%{transform:none}}
+  @keyframes wobble{0%,100%{transform:rotate(0) scale(1)}25%{transform:rotate(-4deg) scale(1.03)}75%{transform:rotate(4deg) scale(1.03)}}
+  @keyframes slam{from{transform:scale(2.2);opacity:0;letter-spacing:.3em}to{transform:none;opacity:1}}
+}
+.squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
+.squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
+.squad-card img{width:64px;height:64px;object-fit:contain}
+.squad-emo{font-size:46px;line-height:64px;height:64px}
+.squad-card b{font-size:13px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.squad-card:hover{border-color:var(--red)}
+@media (prefers-reduced-motion:no-preference){.squad-card{transition:transform .15s}.squad-card:hover{transform:translateY(-3px) rotate(-2deg)}.squad-card:active{transform:scale(.94)}}
 .pop-name{font-family:var(--f-display);font-size:44px;font-weight:700;line-height:.9;text-transform:uppercase;letter-spacing:.03em}
 .pop-stats{color:var(--muted);font-size:14px}
 .victory .vstk{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:12px}
@@ -390,14 +414,17 @@ function showPlayer(name) {
   const p = S.roster.players.find(x => x.name === name) || {};
   const pop = $('#pop');
   pop.innerHTML = `<div class="pop-card" role="dialog" aria-label="${esc(name)}">
-    ${stickers[name] ? `<img class="pop-stk" src="${stickers[name]}" alt="Sticker de ${esc(name)}">` : `<div class="pop-emoji">${esc(emojiOf(name))}</div>`}
+    <div class="pop-stage"><div class="pop-rays" aria-hidden="true"></div>
+      ${stickers[name] ? `<img class="pop-stk" src="${stickers[name]}" alt="Sticker de ${esc(name)}">` : `<div class="pop-stk pop-emoji">${esc(emojiOf(name))}</div>`}</div>
     <div class="pop-name">${esc(name)}</div>
     ${p.aliases && p.aliases.length ? `<div class="muted" style="font-size:12px">En jeu : ${esc(p.aliases.join(', '))}</div>` : ''}
     <div class="pop-stats num">${s ? `${s.m} manche${s.m > 1 ? 's' : ''} · ${fr1(s.avg_points)} pts/manche · ${s.w} V – ${s.l} D` : 'Pas encore joué'}</div>
     <div class="row" style="justify-content:center"><button class="btn primary" data-a="pl-open" data-k="${esc(name)}">Voir sa fiche</button><button class="btn ghost" data-a="pl-close">Fermer</button></div>
   </div>`;
   pop.hidden = false;
+  playSnippet(4);
 }
+function closePop() { $('#pop').hidden = true; stopVictory(); }
 
 function setRow(name, row) {
   pending[name] = row; render();
@@ -740,7 +767,7 @@ function vSaisie() {
 }
 
 function rankCard(title, list, key, fmt, opts = {}) {
-  const items = rankBy(list.filter(s => s.m > 0 && (opts.keepZero || s[key] > 0)), key).slice(0, opts.limit || 10);
+  const items = rankBy(list.filter(s => (opts.all || s.m > 0) && (opts.keepZero || s[key] > 0)), key).slice(0, opts.limit || 10);
   return `<div class="rank"><h3>${title}</h3>${items.length ? `<ol>${items.map((s, i) => `<li><span class="pos">${i + 1}</span><span class="n">${plink(s.name)}</span><span class="val">${fmt(s)}</span></li>`).join('')}</ol>` : '<div class="empty">Aucune donnée</div>'}</div>`;
 }
 function noRounds(what) {
@@ -758,9 +785,25 @@ function quatuor(list) {
 }
 
 function vClassement() {
-  if (!S.rounds.length) return noRounds('Les classements');
   const {list, duos, minGames} = compute(S.rounds);
-  const fair = list.filter(s => s.ok);
+  // Tout l'effectif apparaît, même à 0 : chaque nom reste cliquable dès le début
+  S.roster.players.forEach(p => {
+    if (list.some(s => s.name === p.name)) return;
+    const z = {name: p.name, m: 0, w: 0, l: 0, wr: 0, wr_adj: 0, ok: false, partners: {}, maps: {}};
+    STATS.forEach(({f}) => { z[f] = 0; z['avg_' + f] = 0; z['adj_' + f] = 0; });
+    list.push(z);
+  });
+  const none = !S.rounds.length;
+  const fair = none ? list : list.filter(s => s.ok);
+  const all = {keepZero: true, all: true};
+  const squad = `<h2 class="sec">L’équipe <span>touche un joueur</span></h2>
+  <div class="squad">${S.roster.players.map(p => `<button type="button" class="squad-card" data-a="pl" data-k="${esc(p.name)}">${stickers[p.name] ? `<img src="${stickers[p.name]}" alt="">` : `<span class="squad-emo">${esc(p.emoji || '🎮')}</span>`}<b>${esc(p.name)}</b></button>`).join('')}</div>`;
+  if (none) return `${squad}
+  <div class="notice" style="margin-top:16px">Aucune manche pour l’instant : tout le monde est à 0. Les classements se rempliront dès la première photo validée.</div>
+  <h2 class="sec">Stats totales</h2>
+  <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f], all)).join('')}</div>
+  <h2 class="sec">Victoires / Défaites</h2>
+  <div class="grid g4">${rankCard('Victoires', list, 'w', s => s.w, all)}${rankCard('Défaites', list, 'l', s => s.l, all)}</div>`;
   const played = rankBy(fair, 'adj_points');
   const top = played[0], worst = played.length > 1 ? played[played.length - 1] : null;
   const q = quatuor(list);
@@ -768,8 +811,8 @@ function vClassement() {
   const worstDuo = [...duos].filter(d => d.l > 0).sort((a, b) => b.l - a.l || a.w - b.w).slice(0, 3);
   const duoList = (arr, k) => arr.length ? `<ol>${arr.map((d, i) => `<li><span class="pos">${i + 1}</span><span class="n">${plink(d.a)} &amp; ${plink(d.b)}</span><span class="val">${d[k]}<small>${k === 'w' ? 'V' : 'D'}</small></span></li>`).join('')}</ol>` : '<div class="empty">Pas encore de duo</div>';
   const avg = (f) => s => `${fr1(s['avg_' + f])}<small>${s.m} m.</small>`;
-  return `
-  <div class="notice"><b>Classement équitable.</b> Tout le monde ne joue pas toutes les manches : les moyennes sont ajustées (chaque joueur part avec ${FAIR_K} manches « fantômes » à la moyenne du groupe, donc 2 bonnes manches ne suffisent pas à être n°1). Top, Pire, Quatuor et moyennes : minimum ${minGames} manche${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 % des manches).</div>
+  return `${squad}
+  <div class="notice" style="margin-top:16px"><b>Classement équitable.</b> Tout le monde ne joue pas toutes les manches : les moyennes sont ajustées (chaque joueur part avec ${FAIR_K} manches « fantômes » à la moyenne du groupe, donc 2 bonnes manches ne suffisent pas à être n°1). Top, Pire, Quatuor et moyennes : minimum ${minGames} manche${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 % des manches).</div>
   <h2 class="sec">Top &amp; Pire joueur <span>points par manche, ajustés</span></h2>
   <div class="hero">
     ${top ? `<div class="award gold"><div class="k">Top joueur de la soirée</div><div class="who">${plink(top.name, true)}</div><div class="sub num">${fr1(top.avg_points)} pts / manche · ${top.m} manche${top.m > 1 ? 's' : ''}</div><div class="big">👑</div></div>` : '<div class="empty">Personne n’a encore assez de manches.</div>'}
@@ -783,7 +826,7 @@ function vClassement() {
     <div class="rank"><h3>Gatos negros · défaites ensemble</h3>${duoList(worstDuo, 'l')}</div>
   </div>
   <h2 class="sec">Stats totales</h2>
-  <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f])).join('')}</div>
+  <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f], all)).join('')}</div>
   <h2 class="sec">Stats moyennes <span>par manche jouée</span></h2>
   <div class="grid g4">${STATS.map(s => rankCard('Moy. ' + s.label, fair, 'adj_' + s.f, avg(s.f))).join('')}</div>
   <h2 class="sec">Victoires / Défaites</h2>
@@ -1078,8 +1121,8 @@ document.addEventListener('click', e => {
     case 'dr-step': { const p = U.draft.players[+k], f = b.dataset.f; p[f] = Math.max(0, (+p[f] || 0) + (+b.dataset.d)); render(); break; }
     case 'dr-save': saveDraft(); break;
     case 'pl': showPlayer(k); break;
-    case 'pl-close': $('#pop').hidden = true; break;
-    case 'pl-open': $('#pop').hidden = true; U.selPlayer = k; U.tab = 'joueur'; render(); window.scrollTo({top: 0}); break;
+    case 'pl-close': closePop(); break;
+    case 'pl-open': closePop(); U.selPlayer = k; U.tab = 'joueur'; render(); window.scrollTo({top: 0}); break;
     case 'stk-rm': if (isAdmin()) { delete stickers[k]; render(); write('config/sticker_' + slug(k), d => d.delete()).then(() => toast('Sticker retiré')); } break;
     case 'dr-bot': { const bt = U.draft.bots || (U.draft.bots = {1: 0, 2: 0}); bt[k] = Math.max(0, (bt[k] || 0) + (+b.dataset.d)); render(); break; }
     case 'pick-map': U.selMap = k; render(); break;
@@ -1244,6 +1287,22 @@ function playBuffer(buf) {
   const c = ctx(); stopVictory();
   const s = c.createBufferSource(); s.buffer = buf; s.connect(c.destination); s.start(); curSrc = s;
 }
+/* Quelques secondes de la musique de victoire (fiche joueur) */
+async function playSnippet(sec) {
+  if (!soundOn || !ctx()) return;
+  try { if (actx.state === 'suspended') await actx.resume(); } catch (e) {}
+  try {
+    const buf = await victoryBuffer();
+    if (buf) {
+      stopVictory();
+      const t = actx.currentTime, d = Math.min(sec, buf.duration), s = actx.createBufferSource(), g = actx.createGain();
+      g.gain.setValueAtTime(1, t); g.gain.setValueAtTime(1, t + Math.max(0, d - 0.6)); g.gain.linearRampToValueAtTime(0, t + d);
+      s.buffer = buf; s.connect(g); g.connect(actx.destination); s.start(t, 0, d); curSrc = s;
+      return;
+    }
+  } catch (e) {}
+  fanfare();
+}
 function fanfare() {
   const c = ctx(), t = c.currentTime;
   [[523, 0, .14], [523, .15, .14], [523, .3, .14], [659, .45, .45], [523, .95, .18], [659, 1.15, .18], [784, 1.35, .9]].forEach(([f, s, d]) => {
@@ -1272,7 +1331,8 @@ function celebrate(r) {
 }
 function closeVictory() { $('#victory').hidden = true; stopVictory(); clearTimeout(vTimer); }
 $('#victory').addEventListener('click', closeVictory);
-$('#pop').addEventListener('click', e => { if (e.target.id === 'pop') $('#pop').hidden = true; });
+$('#pop').addEventListener('click', e => { if (e.target.id === 'pop') closePop(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#pop').hidden) closePop(); });
 
 /* Découpe un extrait du fichier choisi, le convertit en WAV mono léger pour le partager via la base */
 const SND_RATE = () => mode === 'firebase' ? 22050 : 11025;
