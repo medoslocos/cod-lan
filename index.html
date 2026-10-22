@@ -245,6 +245,8 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
 <script>
 /* ---------- Config par défaut (doc de Jérémy) ---------- */
 const DEFAULT_PLAYERS = ['Jems','Warzoute','Luis91540','ZZ','Medos','LaKrotte','Miki','Guillaume','Brillcz','Dos'];
+// Pseudos en jeu connus (servent à reconnaître les joueurs sur les photos ; complétés automatiquement ensuite)
+const DEFAULT_ALIASES = {LaKrotte: ['LKTR', 'LK'], Warzoute: ['Theo Tete', 'Theo', 'Théo'], ZZ: ['Zizou'], Brillcz: ['Brice'], Guillaume: ['Gui'], Jems: ['Jeremy', 'Jérémy'], Medos: ['medoslocos', 'Mehdi']};
 const DEFAULT_MAPS = ['Highrise','Skidrow','Terminal','Scrapyard','Karachi','Favela'];
 const EMOJIS = ['🎮','👑','👨‍🦲','💀','🔥','🐐','🤡','🐀','🦍','🐍','🥷','🧀','🍔','🍺','💣','🎯','🧠','🐢','🚽','🦖'];
 const STATS = [
@@ -319,7 +321,7 @@ function write(path, fn) {
 
 /* ---------- État ---------- */
 const S = {
-  roster: {players: DEFAULT_PLAYERS.map(name => ({name, emoji:'🎮'})), maps: [...DEFAULT_MAPS]},
+  roster: {players: DEFAULT_PLAYERS.map(name => ({name, emoji:'🎮', aliases: [...(DEFAULT_ALIASES[name] || [])]})), maps: [...DEFAULT_MAPS]},
   current: {map: DEFAULT_MAPS[0], winner: 0, lineup: []},
   liverows: {}, rounds: [], draw: null, loaded: {rounds:false}
 };
@@ -329,7 +331,7 @@ const U = {
   selPlayer: '', selMap: '',
   confirm: null,          // clé de l'action à confirmer
   edit: null,             // copie d'une manche en cours de modification
-  drawSel: null, drawBal: true, drawSpec: true,
+  drawSel: null, drawBal: true, drawOdd: 'bot',
   newEmoji: '🎮',
   snd: {file: null, start: 0, dur: 12, busy: false}
 };
@@ -358,7 +360,7 @@ function setCurrent(patch) {
 }
 
 /* ---------- Calculs ---------- */
-function teamSizes(r) { const s = {1:0, 2:0}; r.players.forEach(p => s[p.team]++); return s; }
+function teamSizes(r) { const s = {1: 0, 2: 0}; r.players.forEach(p => s[p.team]++); const b = r.bots || {}; s[1] += +b[1] || 0; s[2] += +b[2] || 0; return s; }
 function compute(rounds) {
   const P = {}, duos = {};
   const get = n => P[n] || (P[n] = {name:n, m:0, w:0, l:0, kills:0, poses:0, desam:0, points:0, sup:0, inf:0, eq:0, partners:{}, maps:{}});
@@ -428,8 +430,8 @@ function stepper(prefix, key, f, val, step) {
   </div></div>`;
 }
 
-function balanceLine(lineup) {
-  const a = lineup.filter(l => l.team === 1).length, b = lineup.filter(l => l.team === 2).length;
+function balanceLine(lineup, bots = {}) {
+  const a = lineup.filter(l => l.team === 1).length + (+bots[1] || 0), b = lineup.filter(l => l.team === 2).length + (+bots[2] || 0);
   if (!a && !b) return '';
   const msg = a === b ? 'À égalité' : a > b ? 'Éq. 1 en supériorité numérique' : 'Éq. 2 en supériorité numérique';
   return `<div class="balance"><span class="t1">Éq. 1 : ${a}</span> · <span class="t2">Éq. 2 : ${b}</span> — ${msg}</div>`;
@@ -502,26 +504,60 @@ Extrais chaque ligne de joueur des deux équipes. Colonnes possibles : Score/Poi
 Indique la map si son nom est visible, et l'équipe gagnante si c'est visible (VICTOIRE/DÉFAITE, manches gagnées, bannière). Sinon null.
 Joueurs de l'appli :
 ${roster}
-Pour chaque ligne, "match" = le nom exact d'un joueur de l'appli qui correspond au pseudo en jeu (ressemblance, alias connu), sinon null. Un même joueur de l'appli ne peut apparaître qu'une fois.
-Réponds uniquement en JSON : {"map": string|null, "winner": 1|2|null, "players": [{"gamertag": string, "match": string|null, "team": 1|2, "points": int, "kills": int, "deaths": int, "plants": int, "defuses": int}]}`;
+Pour chaque ligne, "match" = le nom exact d'un joueur de l'appli qui correspond au pseudo en jeu (ressemblance, initiales, abréviation, alias connu), sinon null. Un même joueur de l'appli ne peut apparaître qu'une fois.
+Les bots (joueurs contrôlés par le jeu, souvent nommés "Bot", "[BOT]…" ou avec un nom générique) : mets "bot": true, sinon false.
+Réponds uniquement en JSON : {"map": string|null, "winner": 1|2|null, "players": [{"gamertag": string, "match": string|null, "bot": boolean, "team": 1|2, "points": int, "kills": int, "deaths": int, "plants": int, "defuses": int}]}`;
 }
 function fromAI(res) {
   const names = playerNames(), used = new Set();
   const byAlias = g => { const n = norm(g); if (!n) return ''; const p = S.roster.players.find(p => norm(p.name) === n || (p.aliases || []).some(a => norm(a) === n)); return p ? p.name : ''; };
   const int = v => Math.max(0, Math.round(+v || 0));
-  const players = (Array.isArray(res && res.players) ? res.players : []).map(r => {
+  const rowsIn = Array.isArray(res && res.players) ? res.players : [];
+  const isBot = r => r.bot === true || /^\[?bot\]?\b/i.test(String(r.gamertag || '').trim());
+  const bots = {1: 0, 2: 0};
+  rowsIn.filter(isBot).forEach(r => bots[r.team === 2 ? 2 : 1]++);
+  const players = rowsIn.filter(r => !isBot(r)).map(r => {
     let name = byAlias(r.gamertag) || (names.includes(r.match) ? r.match : '');
     if (name && used.has(name)) name = '';
     if (name) used.add(name);
     return {name, alias: String(r.gamertag || '').slice(0, 40), team: r.team === 2 ? 2 : 1, kills: int(r.kills), poses: int(r.plants), desam: int(r.defuses), points: int(r.points)};
   });
-  const mapRead = res && res.map ? String(res.map) : '';
-  const map = S.roster.maps.find(m => mapRead && (norm(m) === norm(mapRead) || norm(mapRead).includes(norm(m)))) || (S.draw && S.draw.map) || S.roster.maps[0];
-  return {players, map, mapRead, winner: res && (res.winner === 1 || res.winner === 2) ? res.winner : 0};
+  const mapRead = res && res.map ? String(res.map).trim().slice(0, 30) : '';
+  const known = S.roster.maps.find(m => mapRead && (norm(m) === norm(mapRead) || norm(mapRead).includes(norm(m))));
+  // Map inconnue lue sur la photo : on la propose telle quelle, elle sera ajoutée à la liste à la validation
+  const pretty = mapRead.toLowerCase().replace(/(^|[\s-])\S/g, c => c.toUpperCase());
+  const map = known || (mapRead && norm(mapRead) ? pretty : '') || (S.draw && S.draw.map) || S.roster.maps[0];
+  return {players, bots, map, mapRead, winner: res && (res.winner === 1 || res.winner === 2) ? res.winner : 0};
+}
+/* Date de prise de vue lue dans l'EXIF du JPEG (DateTimeOriginal), sinon null */
+async function exifDate(file) {
+  try {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.getUint16(0) !== 0xFFD8) return null;
+    let o = 2;
+    while (o + 10 < v.byteLength) {
+      const marker = v.getUint16(o), len = v.getUint16(o + 2);
+      if ((marker & 0xFF00) !== 0xFF00) break;
+      if (marker === 0xFFE1 && v.getUint32(o + 4) === 0x45786966) {
+        const t = o + 10, le = v.getUint16(t) === 0x4949;
+        const u16 = p => v.getUint16(t + p, le), u32 = p => v.getUint32(t + p, le);
+        const find = (ifd, tags) => { const n = u16(ifd); for (let i = 0; i < n; i++) { const e = ifd + 2 + i * 12; if (tags.includes(u16(e))) return u32(e + 8); } return null; };
+        const ifd0 = u32(4), sub = find(ifd0, [0x8769]);
+        const at = (sub != null && find(sub, [0x9003, 0x9004])) || find(ifd0, [0x0132]);
+        if (at == null) return null;
+        let s = ''; for (let i = 0; i < 19; i++) s += String.fromCharCode(v.getUint8(t + at + i));
+        const m = s.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+        return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null;
+      }
+      o += 2 + len;
+    }
+  } catch (e) {}
+  return null;
 }
 async function handlePhoto(file) {
   if (!file) return;
-  const photoAt = file.lastModified && file.lastModified <= Date.now() + 60000 ? file.lastModified : Date.now();
+  const exif = await exifDate(file);
+  const photoAt = exif && exif <= Date.now() + 60000 ? exif : file.lastModified && file.lastModified <= Date.now() + 60000 ? file.lastModified : Date.now();
   let img;
   try { img = await shrink(file, 1600, 0.82); } catch (e) { return toast('Image illisible, réessaie'); }
   const draft = {status: 'reading', thumb: img.dataUrl, phash: img.phash, photoAt, players: [], map: S.roster.maps[0], winner: 0, ai: true, ok8: false, okDup: false};
@@ -553,10 +589,10 @@ async function saveDraft() {
   const players = d.players.map(p => ({name: p.name, team: p.team, kills: +p.kills || 0, poses: +p.poses || 0, desam: +p.desam || 0, points: +p.points || 0}));
   const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   U.draft = null; render();
-  await write('rounds/' + id, doc => doc.set({n, map: d.map, winner: d.winner, createdAt: Date.now(), photoAt: d.photoAt || Date.now(), phash: d.phash || '', source: 'photo', players}));
-  // Mémorise les pseudos en jeu lus sur la photo pour reconnaître les joueurs la prochaine fois
-  let changed = false;
-  const roster = {...S.roster, players: S.roster.players.map(p => {
+  await write('rounds/' + id, doc => doc.set({n, map: d.map, winner: d.winner, createdAt: Date.now(), photoAt: d.photoAt || Date.now(), phash: d.phash || '', bots: d.bots || {1: 0, 2: 0}, source: 'photo', players}));
+  // Mémorise les pseudos en jeu lus sur la photo (et une map nouvelle) pour la prochaine fois
+  let changed = !S.roster.maps.includes(d.map);
+  const roster = {...S.roster, maps: changed ? [...S.roster.maps, d.map] : S.roster.maps, players: S.roster.players.map(p => {
     const row = d.players.find(r => r.name === p.name && r.alias && norm(r.alias) !== norm(p.name));
     if (!row || (p.aliases || []).some(a => norm(a) === norm(row.alias))) return p;
     changed = true; return {...p, aliases: [...(p.aliases || []), row.alias].slice(-6)};
@@ -608,10 +644,12 @@ function vSaisie() {
     <div class="grid g2">
       ${d.thumb ? `<div class="panel"><img src="${d.thumb}" class="thumb" alt="Photo du tableau des scores"></div>` : ''}
       <div class="panel grid">
-        <div><label class="lbl" for="dr-map">Map</label><select id="dr-map" data-a="dr-map">${S.roster.maps.map(m => `<option ${m === d.map ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
+        <div><label class="lbl" for="dr-map">Map</label><select id="dr-map" data-a="dr-map">${[...new Set([d.map, ...S.roster.maps])].map(m => `<option value="${esc(m)}" ${m === d.map ? 'selected' : ''}>${esc(m)}${S.roster.maps.includes(m) ? '' : ' (nouvelle map)'}</option>`).join('')}</select>
           ${d.mapRead ? `<div class="muted" style="font-size:12px;margin-top:4px">Lu sur la photo : ${esc(d.mapRead)}</div>` : ''}</div>
         <div><span class="lbl">Équipe gagnante</span><div class="seg"><button class="${d.winner === 1 ? 'on1' : ''}" data-a="dr-win" data-v="1">Équipe 1</button><button class="${d.winner === 2 ? 'on2' : ''}" data-a="dr-win" data-v="2">Équipe 2</button></div></div>
-        ${balanceLine(d.players)}
+        ${balanceLine(d.players, d.bots)}
+        <div class="row" style="gap:6px;font-size:13px"><span class="muted">Bots :</span>
+          ${[1, 2].map(t => `<span class="tag t${t}">Éq. ${t} : ${(d.bots || {})[t] || 0} 🤖</span><button class="btn sm ghost" data-a="dr-bot" data-k="${t}" data-d="1" aria-label="Ajouter un bot équipe ${t}">+</button><button class="btn sm ghost" data-a="dr-bot" data-k="${t}" data-d="-1" aria-label="Retirer un bot équipe ${t}">−</button>`).join('')}</div>
       </div>
     </div>
   </div>
@@ -719,16 +757,30 @@ function vMap() {
   if (!U.selMap || !maps.includes(U.selMap)) U.selMap = maps[0];
   const rs = S.rounds.filter(r => r.map === U.selMap);
   const {list} = compute(rs);
-  const w1 = rs.filter(r => r.winner === 1).length;
   const counts = maps.map(m => ({m, n: S.rounds.filter(r => r.map === m).length})).sort((a, b) => b.n - a.n);
+  // Les équipes changent à chaque manche : on raisonne par joueur. Une composition n'est affichée que si elle revient.
+  const comps = {};
+  rs.forEach(r => [1, 2].forEach(t => {
+    const names = r.players.filter(p => p.team === t).map(p => p.name).sort();
+    if (names.length < 2) return;
+    const key = names.join('|'), c = comps[key] || (comps[key] = {names, n: 0, w: 0});
+    c.n++; if (r.winner === t) c.w++;
+  }));
+  const recurring = Object.values(comps).filter(c => c.n >= 2).sort((a, b) => b.n - a.n || b.w - a.w);
   return `<div class="panel"><label class="lbl" for="sel-map">Map</label><select id="sel-map" data-a="sel-map">${maps.map(m => `<option ${m === U.selMap ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
   <h2 class="sec">Stats <span>${esc(U.selMap)}</span></h2>
   <div class="stats">
     <div class="stat"><div class="k">Fois jouée</div><div class="v num">${rs.length}</div></div>
-    <div class="stat"><div class="k">Gagnée par Éq. 1</div><div class="v num" style="color:var(--t1)">${w1}</div></div>
-    <div class="stat"><div class="k">Gagnée par Éq. 2</div><div class="v num" style="color:var(--t2)">${rs.length - w1}</div></div>
+    <div class="stat"><div class="k">Joueurs passés dessus</div><div class="v num">${list.length}</div></div>
   </div>
-  ${rs.length ? `<h2 class="sec">Classements moyens <span>par manche jouée sur cette map</span></h2>
+  ${rs.length ? `<h2 class="sec">Victoires par joueur <span>sur cette map</span></h2>
+  <div class="grid g4">
+    ${rankCard('% de victoires', list, 'wr', x => `${pct(x.wr)}<small>${x.w}/${x.m}</small>`, {keepZero: true})}
+    ${rankCard('Victoires', list, 'w', x => x.w)}
+  </div>
+  ${recurring.length ? `<h2 class="sec">Équipes qui reviennent <span>même composition 2 fois ou plus</span></h2>
+  <div class="grid">${recurring.map(c => `<div class="panel row" style="justify-content:space-between"><span>${c.names.map(label).join(' · ')}</span><b class="num">${c.w} V · ${c.n - c.w} D</b></div>`).join('')}</div>` : ''}
+  <h2 class="sec">Classements moyens <span>par manche jouée sur cette map</span></h2>
   <div class="grid g4">${STATS.map(s => rankCard(s.label + ' joueurs', list, 'avg_' + s.f, x => `${fr1(x['avg_' + s.f])}<small>${x.m} m.</small>`)).join('')}</div>` : `<div class="emptystate" style="margin-top:12px"><b>Pas encore jouée</b>Aucune manche validée sur ${esc(U.selMap)}.</div>`}
   <h2 class="sec">Maps les plus jouées</h2>
   <div class="panel"><div class="chips">${counts.map(c => `<button class="chip ${c.m === U.selMap ? 'on' : ''}" data-a="pick-map" data-k="${esc(c.m)}">${esc(c.m)} <em>${c.n}</em></button>`).join('')}</div></div>`;
@@ -785,15 +837,15 @@ function vTirage() {
     <div class="chips">${names.map(x => `<button class="chip ${U.drawSel.has(x) ? 'on' : ''}" data-a="d-sel" data-k="${esc(x)}">${label(x)}</button>`).join('')}</div>
     <div class="chips">
       <button class="chip ${U.drawBal ? 'on' : ''}" data-a="d-bal">⚖️ Équipes équilibrées (moy. points)</button>
-      <button class="chip ${U.drawSpec ? 'on' : ''}" data-a="d-spec">👀 1 spectateur si nombre impair</button>
+      <button class="chip ${U.drawOdd === 'bot' ? 'on' : ''}" data-a="d-odd" data-v="bot">🤖 Si impair : un bot</button>
+      <button class="chip ${U.drawOdd === 'spec' ? 'on' : ''}" data-a="d-odd" data-v="spec">👀 Si impair : un spectateur</button>
     </div>
     <div class="row"><button class="btn primary" data-a="d-teams">Tirer les équipes</button><button class="btn" data-a="d-map">🎲 Tirer une map</button></div>
   </div>
   ${d && (d.t1 || d.map) ? `<h2 class="sec">Résultat du tirage <span>visible par tout le monde</span></h2>
   <div class="grid">
     ${d.t1 ? `<div class="draw-teams">
-      <div class="draw-team t1"><h3>Équipe 1 · ${d.t1.length}</h3><ul>${d.t1.map(x => `<li>${label(x)}</li>`).join('')}</ul></div>
-      <div class="draw-team t2"><h3>Équipe 2 · ${d.t2.length}</h3><ul>${d.t2.map(x => `<li>${label(x)}</li>`).join('')}</ul></div>
+      ${[1, 2].map(t => { const ps = t === 1 ? d.t1 : d.t2, bot = d.bot === t; return `<div class="draw-team t${t}"><h3>Équipe ${t} · ${ps.length + (bot ? 1 : 0)}</h3><ul>${ps.map(x => `<li>${label(x)}</li>`).join('')}${bot ? '<li class="muted">🤖 Bot</li>' : ''}</ul></div>`; }).join('')}
     </div>${d.spectator ? `<div class="panel">👀 Spectateur : <b>${label(d.spectator)}</b></div>` : ''}` : ''}
     ${d.map ? `<div class="panel"><span class="lbl">Map tirée</span><div class="bigmap">${esc(d.map)}</div></div>` : ''}
     <button class="btn primary block" data-a="d-use">📸 C’est parti : photo du tableau à la fin</button>
@@ -802,7 +854,10 @@ function vTirage() {
 
 /* ---------- Code admin (verrouille Réglages) ---------- */
 let adminHash = null, adminLoaded = false;
-const isAdmin = () => !!adminHash && lsGet('codlan.admin') === adminHash;
+// Déverrouillage valable pour la session seulement : le code est redemandé à chaque réouverture de l'appli
+const ssGet = k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
+const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} };
+const isAdmin = () => !!adminHash && ssGet('codlan.admin') === adminHash;
 async function sha256(s) {
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('codlan:' + s));
   return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
@@ -841,7 +896,8 @@ function vReglages() {
   </div>
   <h2 class="sec">Joueurs <span>emoji au choix de chacun</span></h2>
   <div class="panel">${ps.map(p => `<div class="set-row"><div class="grid" style="gap:6px;min-width:0"><b style="font-size:17px">${esc(p.emoji)} ${esc(p.name)}</b>
-      <div class="emoji-pal">${EMOJIS.map(e => `<button class="${e === p.emoji ? 'on' : ''}" data-a="set-emoji" data-k="${esc(p.name)}" data-v="${e}" aria-label="Emoji ${e}">${e}</button>`).join('')}</div></div>
+      <div class="emoji-pal">${EMOJIS.map(e => `<button class="${e === p.emoji ? 'on' : ''}" data-a="set-emoji" data-k="${esc(p.name)}" data-v="${e}" aria-label="Emoji ${e}">${e}</button>`).join('')}</div>
+      <input id="al-${slug(p.name)}" type="text" value="${esc((p.aliases || []).join(', '))}" data-a="set-alias" data-k="${esc(p.name)}" placeholder="Pseudos en jeu, séparés par des virgules (ex. LKTR)" aria-label="Pseudos en jeu de ${esc(p.name)}" autocomplete="off"></div>
       ${U.confirm === 'rmp:' + p.name ? `<button class="btn sm danger" data-a="set-rm-ok" data-k="${esc(p.name)}">Confirmer</button>` : `<button class="btn sm ghost" data-a="set-rm" data-k="${esc(p.name)}">Retirer</button>`}</div>`).join('')}
     <div class="set-row"><input id="new-player" type="text" maxlength="24" placeholder="Nouveau pseudo (ex. Theo Tete)" autocomplete="off"><button class="btn" data-a="set-add">Ajouter</button></div>
   </div>
@@ -855,7 +911,14 @@ function vReglages() {
   <div class="panel grid" style="max-width:420px">
     <label class="lbl" for="adm-new">Nouveau code (4 caractères min.)</label>
     <input id="adm-new" type="password" autocomplete="new-password">
-    <div class="row"><button class="btn" data-a="adm-change">Changer le code</button><button class="btn ghost" data-a="adm-lock">Verrouiller cet appareil</button></div>
+    <div class="row"><button class="btn" data-a="adm-change">Changer le code</button><button class="btn ghost" data-a="adm-lock">Verrouiller maintenant</button></div>
+  </div>
+  <h2 class="sec">Remise à zéro <span>après un test, avant le week-end</span></h2>
+  <div class="panel grid" style="max-width:420px">
+    <div class="muted" style="font-size:13px">Efface toutes les manches (${S.rounds.length}) et le tirage. Joueurs, pseudos en jeu, maps et musique sont gardés.</div>
+    ${U.confirm === 'wipe'
+      ? `<div class="row"><button class="btn danger" data-a="wipe-ok">Oui, tout effacer</button><button class="btn ghost" data-a="cancel">Annuler</button></div>`
+      : `<button class="btn danger" data-a="wipe">Effacer toutes les manches</button>`}
   </div>`;
 }
 
@@ -867,23 +930,26 @@ function drawTeams() {
   if (names.length < 2) return toast('Sélectionne au moins 2 joueurs');
   names = shuffle(names);
   let spectator = null;
-  if (U.drawSpec && names.length % 2) spectator = names.pop();
+  if (U.drawOdd === 'spec' && names.length % 2) spectator = names.pop();
   const half = Math.ceil(names.length / 2);
+  const botNeeded = U.drawOdd === 'bot' && names.length % 2 === 1;   // l'équipe en sous-nombre reçoit un bot
   let t1, t2;
   if (U.drawBal && S.rounds.length) {
     const {list} = compute(S.rounds);
     const known = list.filter(s => s.m > 0), base = known.length ? known.reduce((a, s) => a + s.avg_points, 0) / known.length : 0;
-    const val = n => { const s = list.find(x => x.name === n); return s && s.m ? s.avg_points : base; };
+    const val = n => { const s = list.find(x => x.name === n); return s && s.m ? s.adj_points : base; };
+    const botVal = botNeeded ? base * 0.5 : 0;
     const cands = [];
     for (let i = 0; i < 400; i++) {
       const sh = shuffle(names), a = sh.slice(0, half), b = sh.slice(half);
-      cands.push({a, b, diff: Math.abs(a.reduce((x, n) => x + val(n), 0) - b.reduce((x, n) => x + val(n), 0))});
+      cands.push({a, b, diff: Math.abs(a.reduce((x, n) => x + val(n), 0) - b.reduce((x, n) => x + val(n), 0) - botVal)});
     }
     cands.sort((x, y) => x.diff - y.diff);
     const pick = cands[Math.floor(Math.random() * Math.min(5, cands.length))];
     t1 = pick.a; t2 = pick.b;
   } else { t1 = names.slice(0, half); t2 = names.slice(half); }
-  const draw = {...(S.draw || {}), t1, t2, spectator, at: Date.now()};
+  const bot = botNeeded ? (t1.length < t2.length ? 1 : 2) : 0;
+  const draw = {...(S.draw || {}), t1, t2, spectator, bot, at: Date.now()};
   S.draw = draw; render();
   write('live/draw', d => d.set(draw));
 }
@@ -926,6 +992,7 @@ document.addEventListener('click', e => {
     case 'dr-rm': U.draft.players.splice(+k, 1); render(); break;
     case 'dr-step': { const p = U.draft.players[+k], f = b.dataset.f; p[f] = Math.max(0, (+p[f] || 0) + (+b.dataset.d)); render(); break; }
     case 'dr-save': saveDraft(); break;
+    case 'dr-bot': { const bt = U.draft.bots || (U.draft.bots = {1: 0, 2: 0}); bt[k] = Math.max(0, (bt[k] || 0) + (+b.dataset.d)); render(); break; }
     case 'pick-map': U.selMap = k; render(); break;
     case 'r-edit': { const r = S.rounds.find(x => x.id === k); U.edit = JSON.parse(JSON.stringify(r)); U.confirm = null; render(); break; }
     case 'r-del': U.confirm = 'del:' + k; render(); break;
@@ -944,7 +1011,7 @@ document.addEventListener('click', e => {
     }
     case 'd-sel': U.drawSel.has(k) ? U.drawSel.delete(k) : U.drawSel.add(k); render(); break;
     case 'd-bal': U.drawBal = !U.drawBal; render(); break;
-    case 'd-spec': U.drawSpec = !U.drawSpec; render(); break;
+    case 'd-odd': U.drawOdd = U.drawOdd === v ? 'none' : v; render(); break;
     case 'd-teams': drawTeams(); break;
     case 'd-map': drawMap(); break;
     case 'd-use': {
@@ -954,7 +1021,7 @@ document.addEventListener('click', e => {
       const code = $('#adm-code').value.trim();
       if (!adminLoaded) return toast('Connexion à la base, réessaie');
       sha256(code).then(h => {
-        if (h === adminHash) { lsSet('codlan.admin', h); toast('Réglages déverrouillés'); render(); }
+        if (h === adminHash) { ssSet('codlan.admin', h); toast('Réglages déverrouillés'); render(); }
         else { toast('Code incorrect'); $('#adm-code').value = ''; }
       });
       break;
@@ -963,10 +1030,19 @@ document.addEventListener('click', e => {
       if (!isAdmin()) return;
       const code = $('#adm-new').value.trim();
       if (code.length < 4) return toast('4 caractères minimum');
-      sha256(code).then(h => { lsSet('codlan.admin', h); adminHash = h; write('config/admin', d => d.set({hash: h})).then(() => { toast('Code admin changé'); render(); }); });
+      sha256(code).then(h => { ssSet('codlan.admin', h); adminHash = h; write('config/admin', d => d.set({hash: h})).then(() => { toast('Code admin changé'); render(); }); });
       break;
     }
-    case 'adm-lock': lsSet('codlan.admin', ''); render(); toast('Réglages verrouillés sur cet appareil'); break;
+    case 'wipe': U.confirm = 'wipe'; render(); break;
+    case 'wipe-ok': {
+      if (!isAdmin()) return;
+      U.confirm = null;
+      const ids = S.rounds.map(r => r.id);
+      S.rounds = []; S.draw = null; seenRounds = new Set(); render();
+      Promise.all([...ids.map(id => write('rounds/' + id, d => d.delete())), write('live/draw', d => d.delete())]).then(() => toast(`${ids.length} manche${ids.length > 1 ? 's' : ''} effacée${ids.length > 1 ? 's' : ''}`));
+      break;
+    }
+    case 'adm-lock': ssSet('codlan.admin', ''); lsSet('codlan.admin', ''); render(); toast('Réglages verrouillés sur cet appareil'); break;
     case 'set-emoji': saveRoster({...S.roster, players: S.roster.players.map(p => p.name === k ? {...p, emoji: v} : p)}); break;
     case 'set-rm': U.confirm = 'rmp:' + k; render(); break;
     case 'set-rm-ok': U.confirm = null; saveRoster({...S.roster, players: S.roster.players.filter(p => p.name !== k)}); break;
@@ -1010,6 +1086,11 @@ document.addEventListener('change', e => {
     case 'dr-name': U.draft.players[+el.dataset.k].name = el.value; render(); break;
     case 'dr-map': U.draft.map = el.value; break;
     case 'dr-ok8': U.draft.ok8 = el.checked; break;
+    case 'set-alias': {
+      if (!isAdmin()) return;
+      const aliases = [...new Set(el.value.split(',').map(s => s.trim()).filter(Boolean))].slice(0, 10);
+      saveRoster({...S.roster, players: S.roster.players.map(p => p.name === el.dataset.k ? {...p, aliases} : p)}); toast('Pseudos en jeu enregistrés'); break;
+    }
     case 'dr-okdup': U.draft.okDup = el.checked; break;
     case 'dr-set': U.draft.players[+el.dataset.k].points = Math.max(0, parseInt(el.value, 10) || 0); break;
     case 'dr-add': if (el.value) { U.draft.players.push({...zero(el.value), team: 1}); render(); } break;
@@ -1138,7 +1219,7 @@ function subscribe() {
     S.liverows = m; render();
   }, onErr);
   store.collection('rounds').onSnapshot(q => {
-    S.rounds = q.docs.map(d => { const x = d.data(); return {id: d.id, n: x.n || 0, map: x.map, winner: x.winner, createdAt: x.createdAt || 0, photoAt: x.photoAt || 0, phash: x.phash || '', source: x.source || '', players: (x.players || []).map(p => ({...zero(p.name), ...p}))}; })
+    S.rounds = q.docs.map(d => { const x = d.data(); return {id: d.id, n: x.n || 0, map: x.map, winner: x.winner, createdAt: x.createdAt || 0, photoAt: x.photoAt || 0, phash: x.phash || '', bots: x.bots || {}, source: x.source || '', players: (x.players || []).map(p => ({...zero(p.name), ...p}))}; })
       .sort((a, b) => a.createdAt - b.createdAt);
     if (seenRounds) {
       const fresh = S.rounds.filter(r => !seenRounds.has(r.id) && Math.abs(Date.now() - r.createdAt) < 600000);
