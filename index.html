@@ -15,6 +15,19 @@
 <script src="firebase-config.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script type="module">
+/* Lecture du tableau des scores par Gemini (Firebase AI Logic, API Gemini Developer) */
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js';
+import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-ai.js';
+if (window.FIREBASE_CONFIG) {
+  const ai = getAI(initializeApp(window.FIREBASE_CONFIG, 'ai'), { backend: new GoogleAIBackend() });
+  const model = getGenerativeModel(ai, { model: 'gemini-2.5-flash', generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
+  window.readScoreboard = async (data, mimeType, prompt) => {
+    const r = await model.generateContent([prompt, { inlineData: { data, mimeType } }]);
+    return JSON.parse(r.response.text().replace(/^\s*```(?:json)?|```\s*$/g, '').trim());
+  };
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap">
@@ -189,6 +202,15 @@ table.t .r{text-align:right}
 .set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .set-row:first-child{border-top:0}
 html,body{margin:0}
+.shot{display:grid;gap:6px;justify-items:center;text-align:center;padding:28px 16px;border:2px dashed var(--red);border-radius:14px;background:var(--red-soft);cursor:pointer}
+.shot b{font-family:var(--f-display);font-size:30px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;line-height:1}
+.shot-ic{font-size:44px;line-height:1}
+.shot:hover{filter:brightness(1.15)}
+label.btn{display:inline-flex;align-items:center;cursor:pointer}
+.thumb{max-width:100%;max-height:340px;border-radius:8px;display:block;margin:0 auto}
+.prow.unknown{box-shadow:0 0 0 1px var(--gold) inset}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--red);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 [hidden]{display:none!important}
 :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 .top-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -366,8 +388,16 @@ function compute(rounds) {
   }
   const list = Object.values(P);
   list.forEach(s => { STATS.forEach(({f}) => s['avg_' + f] = s.m ? s[f] / s.m : 0); s.wr = s.m ? s.w / s.m : 0; });
-  return {list, duos: Object.values(duos)};
+  /* Équité : moyenne ajustée = (total + K manches "fantômes" à la moyenne du groupe) / (manches + K).
+     Peu de manches => tiré vers la moyenne ; beaucoup de manches => quasi la vraie moyenne. */
+  const tot = list.reduce((a, s) => a + s.m, 0) || 1;
+  STATS.forEach(({f}) => { const mean = list.reduce((a, s) => a + s[f], 0) / tot; list.forEach(s => s['adj_' + f] = (s[f] + FAIR_K * mean) / (s.m + FAIR_K)); });
+  list.forEach(s => s.wr_adj = (s.w + FAIR_K * 0.5) / (s.m + FAIR_K));
+  const minGames = Math.max(1, Math.ceil(rounds.length * 0.3));
+  list.forEach(s => s.ok = s.m >= minGames);
+  return {list, duos: Object.values(duos), minGames};
 }
+const FAIR_K = 3;
 function rankBy(list, key, desc = true) {
   return [...list].sort((a, b) => desc ? b[key] - a[key] || b.m - a.m : a[key] - b[key] || b.m - a.m);
 }
@@ -405,44 +435,156 @@ function balanceLine(lineup) {
   return `<div class="balance"><span class="t1">Éq. 1 : ${a}</span> · <span class="t2">Éq. 2 : ${b}</span> — ${msg}</div>`;
 }
 
+/* ---------- Saisie par photo ---------- */
+const MIN_GAP = 8 * 60000;
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+const roundTime = r => r.photoAt || r.createdAt;
+const lastRound = () => [...S.rounds].sort((a, b) => roundTime(b) - roundTime(a))[0];
+const nextNum = () => Math.max(0, ...S.rounds.map(r => r.n || 0)) + 1;
+function ago(t) {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? 'à l’instant' : m < 60 ? `il y a ${m} min` : `il y a ${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+}
+function gapWarning(d) {
+  const last = lastRound(); if (!d.photoAt || !last) return '';
+  const diff = d.photoAt - roundTime(last);
+  if (diff < 0) return `⚠️ Cette photo a été prise <b>avant</b> la dernière manche enregistrée (#${last.n}). C’est peut-être une manche déjà saisie.`;
+  if (diff < MIN_GAP) return `⚠️ Photo prise <b>${Math.max(1, Math.round(diff / 60000))} min</b> après la manche #${last.n}. Une partie dure 10 à 15 min : c’est peut-être la même manche envoyée deux fois.`;
+  return '';
+}
+function presetPlayers() {
+  const d = S.draw;
+  if (!d || !d.t1) return [];
+  return [...d.t1.map(name => ({...zero(name), team: 1})), ...d.t2.map(name => ({...zero(name), team: 2}))];
+}
+function shrink(file, max, q) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      const dataUrl = c.toDataURL('image/jpeg', q); res({dataUrl, b64: dataUrl.split(',')[1]});
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image illisible')); };
+    im.src = url;
+  });
+}
+function aiPrompt() {
+  const roster = S.roster.players.map(p => `- ${p.name}${p.aliases && p.aliases.length ? ' (pseudos en jeu connus : ' + p.aliases.join(', ') + ')' : ''}`).join('\n');
+  return `Tu lis la photo d'un tableau des scores de fin de partie Call of Duty, mode Recherche et Destruction (Search & Destroy). La photo peut être prise de biais sur un écran de télé ou de PC, avec des reflets.
+Extrais chaque ligne de joueur des deux équipes. Colonnes possibles : Score/Points, Éliminations/Kills, Morts/Deaths, Assistances/Assists, Poses/Plants, Désamorçages/Defuses. Si une colonne n'existe pas, mets 0. Ne devine pas un chiffre illisible : mets 0.
+Équipe 1 = l'équipe affichée en premier (en haut ou à gauche), équipe 2 = l'autre.
+Indique la map si son nom est visible, et l'équipe gagnante si c'est visible (VICTOIRE/DÉFAITE, manches gagnées, bannière). Sinon null.
+Joueurs de l'appli :
+${roster}
+Pour chaque ligne, "match" = le nom exact d'un joueur de l'appli qui correspond au pseudo en jeu (ressemblance, alias connu), sinon null. Un même joueur de l'appli ne peut apparaître qu'une fois.
+Réponds uniquement en JSON : {"map": string|null, "winner": 1|2|null, "players": [{"gamertag": string, "match": string|null, "team": 1|2, "points": int, "kills": int, "deaths": int, "plants": int, "defuses": int}]}`;
+}
+function fromAI(res) {
+  const names = playerNames(), used = new Set();
+  const byAlias = g => { const n = norm(g); if (!n) return ''; const p = S.roster.players.find(p => norm(p.name) === n || (p.aliases || []).some(a => norm(a) === n)); return p ? p.name : ''; };
+  const int = v => Math.max(0, Math.round(+v || 0));
+  const players = (Array.isArray(res && res.players) ? res.players : []).map(r => {
+    let name = byAlias(r.gamertag) || (names.includes(r.match) ? r.match : '');
+    if (name && used.has(name)) name = '';
+    if (name) used.add(name);
+    return {name, alias: String(r.gamertag || '').slice(0, 40), team: r.team === 2 ? 2 : 1, kills: int(r.kills), poses: int(r.plants), desam: int(r.defuses), points: int(r.points)};
+  });
+  const mapRead = res && res.map ? String(res.map) : '';
+  const map = S.roster.maps.find(m => mapRead && (norm(m) === norm(mapRead) || norm(mapRead).includes(norm(m)))) || (S.draw && S.draw.map) || S.roster.maps[0];
+  return {players, map, mapRead, winner: res && (res.winner === 1 || res.winner === 2) ? res.winner : 0};
+}
+async function handlePhoto(file) {
+  if (!file) return;
+  const photoAt = file.lastModified && file.lastModified <= Date.now() + 60000 ? file.lastModified : Date.now();
+  let img;
+  try { img = await shrink(file, 1600, 0.82); } catch (e) { return toast('Image illisible, réessaie'); }
+  const draft = {status: 'reading', thumb: img.dataUrl, photoAt, players: [], map: S.roster.maps[0], winner: 0, ai: true, ok8: false};
+  U.draft = draft; render(); window.scrollTo({top: 0});
+  try {
+    if (!window.readScoreboard) throw new Error('lecture automatique indisponible');
+    const res = await window.readScoreboard(img.b64, 'image/jpeg', aiPrompt());
+    if (U.draft !== draft) return;
+    Object.assign(draft, fromAI(res), {status: 'review'});
+    if (!draft.players.length) { draft.error = 'Aucun joueur lu sur la photo. Vérifie qu’on voit bien tout le tableau, ou remplis à la main.'; draft.players = presetPlayers(); }
+  } catch (e) {
+    if (U.draft !== draft) return;
+    Object.assign(draft, {status: 'review', ai: false, error: `Lecture automatique impossible (${e && e.message ? e.message : e}). Remplis à la main ou réessaie avec une photo plus nette.`, players: presetPlayers(), map: (S.draw && S.draw.map) || S.roster.maps[0]});
+  }
+  render();
+}
+async function saveDraft() {
+  const d = U.draft;
+  const names = d.players.map(p => p.name);
+  if (!d.players.length) return toast('Ajoute au moins un joueur');
+  if (names.some(n => !n)) return toast('Choisis qui est chaque joueur (menu « Qui est-ce ? »)');
+  if (new Set(names).size !== names.length) return toast('Un joueur apparaît deux fois');
+  if (!d.players.some(p => p.team === 1) || !d.players.some(p => p.team === 2)) return toast('Il faut au moins un joueur dans chaque équipe');
+  if (d.winner !== 1 && d.winner !== 2) return toast('Choisis l’équipe gagnante');
+  if (gapWarning(d) && !d.ok8) return toast('Confirme que c’est bien une nouvelle manche');
+  const n = nextNum();
+  const players = d.players.map(p => ({name: p.name, team: p.team, kills: +p.kills || 0, poses: +p.poses || 0, desam: +p.desam || 0, points: +p.points || 0}));
+  const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  U.draft = null; render();
+  await write('rounds/' + id, doc => doc.set({n, map: d.map, winner: d.winner, createdAt: Date.now(), photoAt: d.photoAt || Date.now(), source: d.ai ? 'photo' : 'manuel', players}));
+  // Mémorise les pseudos en jeu lus sur la photo pour reconnaître les joueurs la prochaine fois
+  let changed = false;
+  const roster = {...S.roster, players: S.roster.players.map(p => {
+    const row = d.players.find(r => r.name === p.name && r.alias && norm(r.alias) !== norm(p.name));
+    if (!row || (p.aliases || []).some(a => norm(a) === norm(row.alias))) return p;
+    changed = true; return {...p, aliases: [...(p.aliases || []), row.alias].slice(-6)};
+  })};
+  if (changed) saveRoster(roster);
+}
+
 function vSaisie() {
-  const cur = S.current, names = playerNames();
-  const inLineup = n => cur.lineup.find(l => l.name === n);
-  const extra = cur.lineup.map(l => l.name).filter(n => !names.includes(n));
-  const chips = [...names, ...extra].map(n => {
-    const l = inLineup(n); const cls = l ? 't' + l.team : '';
-    return `<button class="chip ${cls}" data-a="lineup" data-k="${esc(n)}">${label(n)}${l ? ` <em>ÉQ.${l.team}</em>` : ''}</button>`;
-  }).join('');
-  const nextN = Math.max(0, ...S.rounds.map(r => r.n || 0)) + 1;
-  const order = [...cur.lineup].sort((a, b) => (b.name === U.me) - (a.name === U.me) || a.team - b.team);
-  const rows = order.map(l => {
-    const r = rowOf(l.name), me = l.name === U.me;
-    return `<div class="prow t${l.team} ${me ? 'me' : ''}">
-      <div class="prow-head"><span class="pname">${label(l.name)}</span>
-        <span class="row" style="gap:6px">${me ? '<span class="tag me">Moi</span>' : ''}<span class="tag t${l.team}">Éq. ${l.team}</span></span></div>
-      <div class="steps">${STATS.map(s => stepper('live', l.name, s.f, r[s.f], s.step)).join('')}</div>
-    </div>`;
-  }).join('');
-  const meOpts = ['<option value="">— Choisis ton pseudo —</option>', ...names.map(n => `<option ${n === U.me ? 'selected' : ''} value="${esc(n)}">${label(n)}</option>`)].join('');
-  return `
-  ${mode === 'local' ? `<div class="notice" style="margin-bottom:12px">Mode local : les données restent sur cet appareil. Ouvre le lien partagé de l’appli pour que tout le monde saisisse en même temps.</div>` : ''}
-  <h2 class="sec">Manche ${nextN} <span>en cours · tout le monde peut saisir</span></h2>
-  <div class="grid g2">
-    <div class="panel"><label class="lbl" for="me">C’est moi</label><select id="me" data-a="me">${meOpts}</select></div>
-    <div class="panel"><label class="lbl" for="cur-map">Map jouée</label><select id="cur-map" data-a="cur-map">${S.roster.maps.map(m => `<option ${m === cur.map ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
-  </div>
-  <h2 class="sec">Équipes <span>touche un pseudo : Éq. 1 → Éq. 2 → absent</span></h2>
-  <div class="panel grid"><div class="chips">${chips}</div>${balanceLine(cur.lineup)}</div>
-  <h2 class="sec">Stats de la manche</h2>
-  ${rows ? `<div class="grid">${rows}</div>` : `<div class="emptystate"><b>Personne en jeu</b>Ajoute les joueurs présents dans les équipes ci-dessus, ou fais un tirage au sort.</div>`}
-  <h2 class="sec">Équipe gagnante</h2>
-  <div class="seg"><button class="${cur.winner === 1 ? 'on1' : ''}" data-a="cur-win" data-v="1">Équipe 1</button><button class="${cur.winner === 2 ? 'on2' : ''}" data-a="cur-win" data-v="2">Équipe 2</button></div>
-  <div class="grid" style="margin-top:16px">
-    <button class="btn primary block" data-a="validate">Valider la manche ${nextN}</button>
-    ${U.confirm === 'reset'
-      ? `<div class="row"><span class="muted">Remettre toutes les stats de la manche à zéro ?</span><button class="btn sm danger" data-a="reset-ok">Oui, remettre à zéro</button><button class="btn sm ghost" data-a="cancel">Annuler</button></div>`
-      : `<button class="btn ghost" data-a="reset">Remettre les stats à zéro</button>`}
+  const d = U.draft, n = nextNum(), last = lastRound();
+  const local = mode === 'local' ? `<div class="notice" style="margin-bottom:12px">Mode local : les données restent sur cet appareil.</div>` : '';
+  const lastLine = last ? `<div class="muted" style="font-size:13px">Dernière manche : #${last.n} · ${esc(last.map)} · ${ago(roundTime(last))}</div>` : '';
+  if (!d) return `${local}
+  <h2 class="sec">Manche ${n} <span>une photo du tableau des scores suffit</span></h2>
+  <div class="grid">
+    <label class="shot" for="ph-cam"><span class="shot-ic">📸</span><b>Prendre le tableau des scores en photo</b><span class="muted">L’IA lit pseudos, kills, poses, désamorçages et points. Tu vérifies, tu valides.</span></label>
+    <input id="ph-cam" type="file" accept="image/*" capture="environment" data-a="photo" hidden>
+    <div class="row"><label class="btn" for="ph-gal">🖼️ Choisir dans la galerie</label><input id="ph-gal" type="file" accept="image/*" data-a="photo" hidden><button class="btn ghost" data-a="dr-manual">Saisie manuelle</button></div>
+    ${lastLine}
   </div>`;
+  if (d.status === 'reading') return `<h2 class="sec">Lecture du tableau…</h2>
+  <div class="panel grid" style="justify-items:center;text-align:center">
+    <img src="${d.thumb}" class="thumb" alt="Photo du tableau des scores"><div class="spinner" aria-hidden="true"></div>
+    <div class="muted">L’IA lit la photo, ça prend 5 à 20 secondes.</div>
+    <button class="btn ghost sm" data-a="dr-cancel">Annuler</button>
+  </div>`;
+  const warn = gapWarning(d);
+  const names = playerNames();
+  const rows = d.players.map((p, i) => `<div class="prow t${p.team} ${p.name ? '' : 'unknown'}">
+    <div class="prow-head" style="flex-wrap:wrap">
+      <select id="dr-name-${i}" data-a="dr-name" data-k="${i}" style="flex:1;width:auto;min-width:150px">${['<option value="">— Qui est-ce ? —</option>', ...names.map(x => `<option ${x === p.name ? 'selected' : ''} value="${esc(x)}">${label(x)}</option>`)].join('')}</select>
+      <span class="row" style="gap:6px"><button class="btn sm" data-a="dr-team" data-k="${i}">Éq. ${p.team} ⇄</button><button class="btn sm danger" data-a="dr-rm" data-k="${i}">Retirer</button></span>
+    </div>
+    ${p.alias ? `<div class="muted" style="font-size:12px">Lu sur la photo : <b>${esc(p.alias)}</b></div>` : ''}
+    <div class="steps">${STATS.map(s => stepper('dr', String(i), s.f, p[s.f], s.step)).join('')}</div></div>`).join('');
+  const addable = names.filter(x => !d.players.some(p => p.name === x));
+  return `${local}
+  <h2 class="sec">Vérifie la manche ${n} <span>${d.ai ? 'lue par l’IA · corrige si besoin' : 'saisie manuelle'}</span></h2>
+  <div class="grid">
+    ${warn ? `<div class="notice">${warn}<label class="row" style="margin-top:8px;gap:8px"><input type="checkbox" id="dr-ok8" data-a="dr-ok8" ${d.ok8 ? 'checked' : ''}> Oui, c’est bien une nouvelle manche</label></div>` : ''}
+    ${d.error ? `<div class="notice" style="border-color:var(--t2)">${esc(d.error)}</div>` : ''}
+    <div class="grid g2">
+      ${d.thumb ? `<div class="panel"><img src="${d.thumb}" class="thumb" alt="Photo du tableau des scores"></div>` : ''}
+      <div class="panel grid">
+        <div><label class="lbl" for="dr-map">Map</label><select id="dr-map" data-a="dr-map">${S.roster.maps.map(m => `<option ${m === d.map ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
+          ${d.mapRead ? `<div class="muted" style="font-size:12px;margin-top:4px">Lu sur la photo : ${esc(d.mapRead)}</div>` : ''}</div>
+        <div><span class="lbl">Équipe gagnante</span><div class="seg"><button class="${d.winner === 1 ? 'on1' : ''}" data-a="dr-win" data-v="1">Équipe 1</button><button class="${d.winner === 2 ? 'on2' : ''}" data-a="dr-win" data-v="2">Équipe 2</button></div></div>
+        ${balanceLine(d.players)}
+      </div>
+    </div>
+  </div>
+  <h2 class="sec">Joueurs <span>${d.players.length} · absents = pas dans la liste</span></h2>
+  ${rows ? `<div class="grid">${rows}</div>` : '<div class="emptystate"><b>Aucun joueur</b>Ajoute les joueurs de la manche ci-dessous.</div>'}
+  ${addable.length ? `<div style="margin-top:10px"><label class="lbl" for="dr-add">Ajouter un joueur</label><select id="dr-add" data-a="dr-add"><option value="">—</option>${addable.map(x => `<option value="${esc(x)}">${label(x)}</option>`).join('')}</select></div>` : ''}
+  <div class="grid" style="margin-top:16px"><button class="btn primary block" data-a="dr-save">Valider la manche ${n}</button><button class="btn ghost" data-a="dr-cancel">Annuler</button></div>`;
 }
 
 function rankCard(title, list, key, fmt, opts = {}) {
@@ -454,9 +596,9 @@ function noRounds(what) {
 }
 
 function quatuor(list) {
-  const played = list.filter(s => s.m > 0), taken = new Set(), out = [];
+  const played = list.filter(s => s.ok), taken = new Set(), out = [];
   for (const {f, label: l} of STATS) {
-    const best = rankBy(played, 'avg_' + f).find(s => !taken.has(s.name) && s['avg_' + f] > 0);
+    const best = rankBy(played, 'adj_' + f).find(s => !taken.has(s.name) && s['avg_' + f] > 0);
     if (!best) { out.push({role: 'Top ' + l, s: null, v: 'Personne pour l’instant'}); continue; }
     { taken.add(best.name); out.push({role: 'Top ' + l, s: best, v: fr1(best['avg_' + f]) + ' / manche'}); }
   }
@@ -465,8 +607,9 @@ function quatuor(list) {
 
 function vClassement() {
   if (!S.rounds.length) return noRounds('Les classements');
-  const {list, duos} = compute(S.rounds);
-  const played = rankBy(list.filter(s => s.m > 0), 'avg_points');
+  const {list, duos, minGames} = compute(S.rounds);
+  const fair = list.filter(s => s.ok);
+  const played = rankBy(fair, 'adj_points');
   const top = played[0], worst = played.length > 1 ? played[played.length - 1] : null;
   const q = quatuor(list);
   const bestDuo = [...duos].filter(d => d.w > 0).sort((a, b) => b.w - a.w || a.l - b.l).slice(0, 3);
@@ -474,9 +617,10 @@ function vClassement() {
   const duoList = (arr, k) => arr.length ? `<ol>${arr.map((d, i) => `<li><span class="pos">${i + 1}</span><span class="n">${label(d.a)} &amp; ${label(d.b)}</span><span class="val">${d[k]}<small>${k === 'w' ? 'V' : 'D'}</small></span></li>`).join('')}</ol>` : '<div class="empty">Pas encore de duo</div>';
   const avg = (f) => s => `${fr1(s['avg_' + f])}<small>${s.m} m.</small>`;
   return `
-  <h2 class="sec">Top &amp; Pire joueur <span>moyenne de points par manche</span></h2>
+  <div class="notice"><b>Classement équitable.</b> Tout le monde ne joue pas toutes les manches : les moyennes sont ajustées (chaque joueur part avec ${FAIR_K} manches « fantômes » à la moyenne du groupe, donc 2 bonnes manches ne suffisent pas à être n°1). Top, Pire, Quatuor et moyennes : minimum ${minGames} manche${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 % des manches).</div>
+  <h2 class="sec">Top &amp; Pire joueur <span>points par manche, ajustés</span></h2>
   <div class="hero">
-    <div class="award gold"><div class="k">Top joueur de la soirée</div><div class="who">${label(top.name)}</div><div class="sub num">${fr1(top.avg_points)} pts / manche · ${top.m} manche${top.m > 1 ? 's' : ''}</div><div class="big">👑</div></div>
+    ${top ? `<div class="award gold"><div class="k">Top joueur de la soirée</div><div class="who">${label(top.name)}</div><div class="sub num">${fr1(top.avg_points)} pts / manche · ${top.m} manche${top.m > 1 ? 's' : ''}</div><div class="big">👑</div></div>` : '<div class="empty">Personne n’a encore assez de manches.</div>'}
     ${worst ? `<div class="award"><div class="k">Pire joueur de la soirée</div><div class="who">${label(worst.name)}</div><div class="sub num">${fr1(worst.avg_points)} pts / manche · ${worst.m} manche${worst.m > 1 ? 's' : ''}</div><div class="big">👨‍🦲</div></div>` : ''}
   </div>
   <h2 class="sec">Quatuor idéal <span>le meilleur de chaque stat, 4 joueurs différents</span></h2>
@@ -489,12 +633,12 @@ function vClassement() {
   <h2 class="sec">Stats totales</h2>
   <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f])).join('')}</div>
   <h2 class="sec">Stats moyennes <span>par manche jouée</span></h2>
-  <div class="grid g4">${STATS.map(s => rankCard('Moy. ' + s.label, list, 'avg_' + s.f, avg(s.f))).join('')}</div>
+  <div class="grid g4">${STATS.map(s => rankCard('Moy. ' + s.label, fair, 'adj_' + s.f, avg(s.f))).join('')}</div>
   <h2 class="sec">Victoires / Défaites</h2>
   <div class="grid g4">
+    ${rankCard('% de victoires (ajusté)', fair, 'wr_adj', s => `${pct(s.wr)}<small>${s.w}/${s.m}</small>`, {keepZero:true})}
     ${rankCard('Victoires', list, 'w', s => s.w)}
     ${rankCard('Défaites', list, 'l', s => s.l)}
-    ${rankCard('% de victoires', list, 'wr', s => `${pct(s.wr)}<small>${s.m} m.</small>`, {keepZero:true})}
   </div>`;
 }
 
@@ -742,19 +886,13 @@ document.addEventListener('click', e => {
   switch (a) {
     case 'tab': U.tab = v; U.confirm = null; lsSet('codlan.tab', v); render(); window.scrollTo({top: 0}); break;
     case 'cancel': U.confirm = null; render(); break;
-    case 'lineup': {
-      const l = cur.lineup.find(x => x.name === k);
-      let lineup;
-      if (!l) lineup = [...cur.lineup, {name: k, team: 1}];
-      else if (l.team === 1) lineup = cur.lineup.map(x => x.name === k ? {...x, team: 2} : x);
-      else lineup = cur.lineup.filter(x => x.name !== k);
-      setCurrent({lineup}); break;
-    }
-    case 'cur-win': setCurrent({winner: +v}); break;
-    case 'live-step': { const r = {...rowOf(k)}; r[b.dataset.f] = Math.max(0, (+r[b.dataset.f] || 0) + (+b.dataset.d)); setRow(k, r); break; }
-    case 'validate': validate(); break;
-    case 'reset': U.confirm = 'reset'; render(); break;
-    case 'reset-ok': U.confirm = null; cur.lineup.forEach(l => setRow(l.name, zero(l.name))); setCurrent({winner: 0}); toast('Stats remises à zéro'); break;
+    case 'dr-manual': U.draft = {status: 'review', ai: false, photoAt: null, players: presetPlayers(), map: (S.draw && S.draw.map) || S.roster.maps[0], winner: 0}; render(); break;
+    case 'dr-cancel': U.draft = null; render(); break;
+    case 'dr-win': U.draft.winner = +v; render(); break;
+    case 'dr-team': { const p = U.draft.players[+k]; p.team = 3 - p.team; render(); break; }
+    case 'dr-rm': U.draft.players.splice(+k, 1); render(); break;
+    case 'dr-step': { const p = U.draft.players[+k], f = b.dataset.f; p[f] = Math.max(0, (+p[f] || 0) + (+b.dataset.d)); render(); break; }
+    case 'dr-save': saveDraft(); break;
     case 'pick-map': U.selMap = k; render(); break;
     case 'r-edit': { const r = S.rounds.find(x => x.id === k); U.edit = JSON.parse(JSON.stringify(r)); U.confirm = null; render(); break; }
     case 'r-del': U.confirm = 'del:' + k; render(); break;
@@ -777,11 +915,9 @@ document.addEventListener('click', e => {
     case 'd-teams': drawTeams(); break;
     case 'd-map': drawMap(); break;
     case 'd-use': {
-      const d = S.draw || {}; const patch = {};
-      if (d.t1) patch.lineup = [...d.t1.map(name => ({name, team: 1})), ...d.t2.map(name => ({name, team: 2}))];
-      if (d.map) patch.map = d.map;
-      patch.winner = 0;
-      setCurrent(patch); U.tab = 'saisie'; render(); window.scrollTo({top: 0}); toast('Équipes envoyées dans la saisie'); break;
+      const d = S.draw || {};
+      U.draft = {status: 'review', ai: false, photoAt: null, players: presetPlayers(), map: d.map || S.roster.maps[0], winner: 0};
+      U.tab = 'saisie'; render(); window.scrollTo({top: 0}); toast('Équipes envoyées dans la saisie'); break;
     }
     case 'adm-unlock': {
       const code = $('#adm-code').value.trim();
@@ -839,8 +975,12 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const el = e.target, a = el.dataset.a; if (!a) return;
   switch (a) {
-    case 'me': U.me = el.value; lsSet('codlan.me', el.value); render(); break;
-    case 'cur-map': setCurrent({map: el.value}); break;
+    case 'photo': { const f = el.files && el.files[0]; el.value = ''; handlePhoto(f); break; }
+    case 'dr-name': U.draft.players[+el.dataset.k].name = el.value; render(); break;
+    case 'dr-map': U.draft.map = el.value; break;
+    case 'dr-ok8': U.draft.ok8 = el.checked; break;
+    case 'dr-set': U.draft.players[+el.dataset.k].points = Math.max(0, parseInt(el.value, 10) || 0); break;
+    case 'dr-add': if (el.value) { U.draft.players.push({...zero(el.value), team: 1}); render(); } break;
     case 'sel-player': U.selPlayer = el.value; render(); break;
     case 'sel-map': U.selMap = el.value; render(); break;
     case 'live-set': { const r = {...rowOf(el.dataset.k)}; r.points = Math.max(0, parseInt(el.value, 10) || 0); setRow(el.dataset.k, r); break; }
@@ -953,7 +1093,7 @@ let seenRounds = null;
 function subscribe() {
   const onErr = err => { if (err && err.code !== 'revoked') toast(err.code === 'permission-denied' ? 'Accès à la base refusé : préviens Medos' : 'Synchro interrompue, recharge la page'); };
   store.doc('config/roster').onSnapshot(s => {
-    if (s.exists) { const d = s.data(); S.roster = {players: (d.players || []).map(p => ({name: p.name, emoji: p.emoji || '🎮'})), maps: [...(d.maps || [])]}; }
+    if (s.exists) { const d = s.data(); S.roster = {players: (d.players || []).map(p => ({name: p.name, emoji: p.emoji || '🎮', aliases: Array.isArray(p.aliases) ? p.aliases.map(String).slice(0, 10) : []})), maps: [...(d.maps || [])]}; }
     render();
   }, onErr);
   store.doc('live/current').onSnapshot(s => {
@@ -966,7 +1106,7 @@ function subscribe() {
     S.liverows = m; render();
   }, onErr);
   store.collection('rounds').onSnapshot(q => {
-    S.rounds = q.docs.map(d => { const x = d.data(); return {id: d.id, n: x.n || 0, map: x.map, winner: x.winner, createdAt: x.createdAt || 0, players: (x.players || []).map(p => ({...zero(p.name), ...p}))}; })
+    S.rounds = q.docs.map(d => { const x = d.data(); return {id: d.id, n: x.n || 0, map: x.map, winner: x.winner, createdAt: x.createdAt || 0, photoAt: x.photoAt || 0, source: x.source || '', players: (x.players || []).map(p => ({...zero(p.name), ...p}))}; })
       .sort((a, b) => a.createdAt - b.createdAt);
     if (seenRounds) {
       const fresh = S.rounds.filter(r => !seenRounds.has(r.id) && Math.abs(Date.now() - r.createdAt) < 600000);
