@@ -816,7 +816,17 @@ function vClassement() {
   const duoList = (arr, k) => arr.length ? `<ol>${arr.map((d, i) => `<li><span class="pos">${i + 1}</span><span class="n">${plink(d.a)} &amp; ${plink(d.b)}</span><span class="val">${d[k]}<small>${k === 'w' ? 'V' : 'D'}</small></span></li>`).join('')}</ol>` : '<div class="empty">Pas encore de duo</div>';
   const avg = (f) => s => `${fr1(s['avg_' + f])}<small>${s.m} m.</small>`;
   return `${squad}
-  <div class="notice" style="margin-top:16px"><b>Classement équitable.</b> Tout le monde ne joue pas toutes les manches : les moyennes sont ajustées (chaque joueur part avec ${FAIR_K} manches « fantômes » à la moyenne du groupe, donc 2 bonnes manches ne suffisent pas à être n°1). Top, Pire, Quatuor et moyennes : minimum ${minGames} manche${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 % des manches).</div>
+  <h2 class="sec">Stats totales</h2>
+  <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f], all)).join('')}</div>
+  <div class="notice" style="margin-top:6px"><b>Classement équitable.</b> Tout le monde ne joue pas toutes les manches : les moyennes sont ajustées (chaque joueur part avec ${FAIR_K} manches « fantômes » à la moyenne du groupe, donc 2 bonnes manches ne suffisent pas à être n°1). Top, Pire, Quatuor et moyennes : minimum ${minGames} manche${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 % des manches).</div>
+  <h2 class="sec">Stats moyennes <span>par manche jouée</span></h2>
+  <div class="grid g4">${STATS.map(s => rankCard('Moy. ' + s.label, fair, 'adj_' + s.f, avg(s.f))).join('')}</div>
+  <h2 class="sec">Victoires / Défaites</h2>
+  <div class="grid g4">
+    ${rankCard('% de victoires (ajusté)', fair, 'wr_adj', s => `${pct(s.wr)}<small>${s.w}/${s.m}</small>`, {keepZero:true})}
+    ${rankCard('Victoires', list, 'w', s => s.w)}
+    ${rankCard('Défaites', list, 'l', s => s.l)}
+  </div>
   <h2 class="sec">Top &amp; Pire joueur <span>points par manche, ajustés</span></h2>
   <div class="hero">
     ${top ? `<div class="award gold"><div class="k">Top joueur de la soirée</div><div class="who">${plink(top.name, true)}</div><div class="sub num">${fr1(top.avg_points)} pts / manche · ${top.m} manche${top.m > 1 ? 's' : ''}</div><div class="big">👑</div></div>` : '<div class="empty">Personne n’a encore assez de manches.</div>'}
@@ -828,16 +838,6 @@ function vClassement() {
   <div class="grid g2">
     <div class="rank"><h3>Duo de choc · victoires ensemble</h3>${duoList(bestDuo, 'w')}</div>
     <div class="rank"><h3>Gatos negros · défaites ensemble</h3>${duoList(worstDuo, 'l')}</div>
-  </div>
-  <h2 class="sec">Stats totales</h2>
-  <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f], all)).join('')}</div>
-  <h2 class="sec">Stats moyennes <span>par manche jouée</span></h2>
-  <div class="grid g4">${STATS.map(s => rankCard('Moy. ' + s.label, fair, 'adj_' + s.f, avg(s.f))).join('')}</div>
-  <h2 class="sec">Victoires / Défaites</h2>
-  <div class="grid g4">
-    ${rankCard('% de victoires (ajusté)', fair, 'wr_adj', s => `${pct(s.wr)}<small>${s.w}/${s.m}</small>`, {keepZero:true})}
-    ${rankCard('Victoires', list, 'w', s => s.w)}
-    ${rankCard('Défaites', list, 'l', s => s.l)}
   </div>`;
 }
 
@@ -1378,7 +1378,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-145054';
+const APP_VERSION = '20261022-145528';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
