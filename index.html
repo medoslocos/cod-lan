@@ -228,6 +228,8 @@ html,body{margin:0}
   @keyframes wobble{0%,100%{transform:rotate(0) scale(1)}25%{transform:rotate(-4deg) scale(1.03)}75%{transform:rotate(4deg) scale(1.03)}}
   @keyframes slam{from{transform:scale(2.2);opacity:0;letter-spacing:.3em}to{transform:none;opacity:1}}
 }
+.update{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:22;max-width:calc(100% - 32px);
+  border:0;border-radius:999px;background:var(--gold);color:#111;font-weight:800;padding:12px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5);cursor:pointer}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -279,6 +281,7 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
 <div id="toast" class="toast" hidden></div>
 <div id="victory" class="victory" hidden></div>
 <div id="pop" class="pop" hidden></div>
+<button id="update" class="update" type="button" hidden>🔄 Nouvelle version de l’appli · toucher pour mettre à jour</button>
 
 <script>
 /* ---------- Config par défaut (doc de Jérémy) ---------- */
@@ -1373,6 +1376,21 @@ async function prepareSound() {
   const out = await new Promise((res, rej) => { off.oncomplete = e => res(e.renderedBuffer); const p = off.startRendering(); if (p && p.then) p.then(res, rej); });
   return {buffer: out, wav: bufToB64(toWav(out)), dur, start};
 }
+
+/* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
+const APP_VERSION = '20261022-144918';
+async function checkUpdate() {
+  if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
+  try {
+    const html = await (await fetch('./?v=' + Date.now(), {cache: 'no-store'})).text();
+    const m = html.match(/const APP_VERSION = '20261022-144918']+)'/);
+    if (m && m[1] !== APP_VERSION) $('#update').hidden = false;
+  } catch (e) {}
+}
+$('#update').addEventListener('click', () => { location.replace(location.pathname + '?v=' + Date.now() + location.hash); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
+setInterval(checkUpdate, 3 * 60000);
+setTimeout(checkUpdate, 4000);
 
 /* ---------- Démarrage ---------- */
 let seenRounds = null;
