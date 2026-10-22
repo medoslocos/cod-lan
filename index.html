@@ -245,6 +245,12 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .rules ul{margin:6px 0 0;padding-left:18px;display:grid;gap:3px;font-size:14px}
 .rules .lockline{margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(242,182,50,.12);border:1px solid rgba(242,182,50,.45);font-size:13px;font-weight:600}
 .btn:disabled{opacity:.55;cursor:not-allowed}
+.rank li{background:linear-gradient(90deg,var(--red) var(--part,0%),var(--line) var(--part,0%)) left bottom/100% 2px no-repeat;padding-bottom:7px;border-top:0}
+.rank li.low{opacity:.55}
+.rank .gp{display:block;font-size:10px;font-weight:700;color:var(--muted);text-align:right;margin-left:0}
+.legend{display:flex;gap:10px;align-items:center;margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:13px;color:var(--muted)}
+.legend b{color:var(--fg)}
+.legend-bar{flex:none;width:34px;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--red) 40%,var(--line) 40%)}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -803,9 +809,16 @@ function vSaisie() {
   <div class="savebar grid">${d.blocker ? `<div id="dr-blocker" class="blocker">⛔ ${esc(d.blocker)}</div>` : ''}<button class="btn primary block" data-a="dr-save">✅ Valider la game ${n}</button><button class="btn ghost" data-a="dr-cancel">Annuler</button></div>`;
 }
 
+/* Participation visible partout : barre rouge = part des games jouées + « x/N g. » à côté de la valeur.
+   RANK_N = nombre de games du périmètre affiché (toutes, ou celles de la map). */
+let RANK_N = 0, RANK_MIN = 0;
 function rankCard(title, list, key, fmt, opts = {}) {
   const items = rankBy(list.filter(s => (opts.all || s.m > 0) && (opts.keepZero || s[key] > 0)), key).slice(0, opts.limit || 10);
-  return `<div class="rank"><h3>${title}</h3>${items.length ? `<ol>${items.map((s, i) => `<li><span class="pos">${i + 1}</span><span class="n">${plink(s.name)}</span><span class="val">${fmt(s)}</span></li>`).join('')}</ol>` : '<div class="empty">Aucune donnée</div>'}</div>`;
+  const row = (s, i) => {
+    const part = RANK_N ? Math.round(100 * s.m / RANK_N) : 0, low = RANK_N && RANK_MIN && s.m < RANK_MIN;
+    return `<li class="${low ? 'low' : ''}" style="--part:${part}%" title="${s.m}/${RANK_N} games jouées"><span class="pos">${i + 1}</span><span class="n">${plink(s.name)}</span><span class="val">${fmt(s)}${RANK_N ? `<small class="gp">${s.m}/${RANK_N} g.</small>` : ''}</span></li>`;
+  };
+  return `<div class="rank"><h3>${title}</h3>${items.length ? `<ol>${items.map(row).join('')}</ol>` : '<div class="empty">Aucune donnée</div>'}</div>`;
 }
 function noRounds(what) {
   return `<div class="emptystate"><b>Aucune game</b>${what} apparaîtront dès la première game validée dans l’onglet Saisie.</div>`;
@@ -823,6 +836,7 @@ function quatuor(list) {
 
 function vClassement() {
   const {list, duos, minGames} = compute(S.rounds);
+  RANK_N = S.rounds.length; RANK_MIN = minGames;
   // Tout l'effectif apparaît, même à 0 : chaque nom reste cliquable dès le début
   S.roster.players.forEach(p => {
     if (list.some(s => s.name === p.name)) return;
@@ -847,16 +861,17 @@ function vClassement() {
   const bestDuo = [...duos].filter(d => d.w > 0).sort((a, b) => b.w - a.w || a.l - b.l).slice(0, 3);
   const worstDuo = [...duos].filter(d => d.l > 0).sort((a, b) => b.l - a.l || a.w - b.w).slice(0, 3);
   const duoList = (arr, k) => arr.length ? `<ol>${arr.map((d, i) => `<li><span class="pos">${i + 1}</span><span class="n">${plink(d.a)} &amp; ${plink(d.b)}</span><span class="val">${d[k]}<small>${k === 'w' ? 'V' : 'D'}</small></span></li>`).join('')}</ol>` : '<div class="empty">Pas encore de duo</div>';
-  const avg = (f) => s => `${fr1(s['avg_' + f])}<small>${s.m} m.</small>`;
+  const avg = (f) => s => fr1(s['avg_' + f]);
   return `${squad}
-  <h2 class="sec">Stats totales</h2>
+  <div class="legend"><span class="legend-bar"></span><span><b>Barre rouge = part des games jouées</b> (ex. <b>3/${RANK_N} g.</b>). Les <b>totaux</b> avantagent ceux qui jouent le plus ; les joueurs <span style="opacity:.55">grisés</span> ont joué moins de ${minGames} game${minGames > 1 ? 's' : ''}. Pour comparer à égalité, regarde les <b>moyennes</b>.</span></div>
+  <h2 class="sec">Stats totales <span>avantage à ceux qui jouent le plus</span></h2>
   <div class="grid g4">${STATS.map(s => rankCard(s.label, list, s.f, x => x[s.f], all)).join('')}</div>
   <div class="notice" style="margin-top:6px"><b>Classement équitable.</b> Tout le monde ne joue pas toutes les games : les moyennes sont ajustées (chaque joueur part avec ${FAIR_K} games « fantômes » à la moyenne du groupe, donc 2 bonnes games ne suffisent pas à être n°1). Top, Pire, Quatuor et moyennes : minimum ${minGames} game${minGames > 1 ? 's' : ''} jouée${minGames > 1 ? 's' : ''} (30 % des games).</div>
   <h2 class="sec">Stats moyennes <span>par game jouée</span></h2>
   <div class="grid g4">${STATS.map(s => rankCard('Moy. ' + s.label, fair, 'adj_' + s.f, avg(s.f))).join('')}</div>
   <h2 class="sec">Victoires / Défaites</h2>
   <div class="grid g4">
-    ${rankCard('% de victoires (ajusté)', fair, 'wr_adj', s => `${pct(s.wr)}<small>${s.w}/${s.m}</small>`, {keepZero:true})}
+    ${rankCard('% de victoires (ajusté)', fair, 'wr_adj', s => pct(s.wr), {keepZero:true})}
     ${rankCard('Victoires', list, 'w', s => s.w)}
     ${rankCard('Défaites', list, 'l', s => s.l)}
   </div>
@@ -919,6 +934,7 @@ function vMap() {
   const maps = [...new Set([...S.roster.maps, ...S.rounds.map(r => r.map)])];
   if (!U.selMap || !maps.includes(U.selMap)) U.selMap = maps[0];
   const rs = S.rounds.filter(r => r.map === U.selMap);
+  RANK_N = rs.length; RANK_MIN = 0;
   const {list} = compute(rs);
   const counts = maps.map(m => ({m, n: S.rounds.filter(r => r.map === m).length})).sort((a, b) => b.n - a.n);
   // Les équipes changent à chaque game : on raisonne par joueur. Une composition n'est affichée que si elle revient.
@@ -938,13 +954,13 @@ function vMap() {
   </div>
   ${rs.length ? `<h2 class="sec">Victoires par joueur <span>sur cette map</span></h2>
   <div class="grid g4">
-    ${rankCard('% de victoires', list, 'wr', x => `${pct(x.wr)}<small>${x.w}/${x.m}</small>`, {keepZero: true})}
+    ${rankCard('% de victoires', list, 'wr', x => pct(x.wr), {keepZero: true})}
     ${rankCard('Victoires', list, 'w', x => x.w)}
   </div>
   ${recurring.length ? `<h2 class="sec">Équipes qui reviennent <span>même composition 2 fois ou plus</span></h2>
   <div class="grid">${recurring.map(c => `<div class="panel row" style="justify-content:space-between"><span>${c.names.map(label).join(' · ')}</span><b class="num">${c.w} V · ${c.n - c.w} D</b></div>`).join('')}</div>` : ''}
   <h2 class="sec">Classements moyens <span>par game jouée sur cette map</span></h2>
-  <div class="grid g4">${STATS.map(s => rankCard(s.label + ' joueurs', list, 'avg_' + s.f, x => `${fr1(x['avg_' + s.f])}<small>${x.m} m.</small>`)).join('')}</div>` : `<div class="emptystate" style="margin-top:12px"><b>Pas encore jouée</b>Aucune game validée sur ${esc(U.selMap)}.</div>`}
+  <div class="grid g4">${STATS.map(s => rankCard(s.label + ' joueurs', list, 'avg_' + s.f, x => fr1(x['avg_' + s.f]))).join('')}</div>` : `<div class="emptystate" style="margin-top:12px"><b>Pas encore jouée</b>Aucune game validée sur ${esc(U.selMap)}.</div>`}
   <h2 class="sec">Maps les plus jouées</h2>
   <div class="panel"><div class="chips">${counts.map(c => `<button class="chip ${c.m === U.selMap ? 'on' : ''}" data-a="pick-map" data-k="${esc(c.m)}">${esc(c.m)} <em>${c.n}</em></button>`).join('')}</div></div>`;
 }
@@ -1084,7 +1100,7 @@ function vReglages() {
   <div class="panel">
     <div class="muted" style="font-size:13px;margin-bottom:6px">Modifie un nom puis valide (Entrée) : toutes les games jouées sur cette map sont mises à jour. Écrire le nom d’une autre map fusionne les deux.</div>
     ${S.roster.maps.map(m => `<div class="set-row"><input id="mp-${slug(m)}" type="text" maxlength="30" value="${esc(m)}" data-a="map-rename" data-k="${esc(m)}" aria-label="Nom de la map ${esc(m)}" autocomplete="off">
-      <span class="row" style="gap:6px"><span class="muted num" style="font-size:12px">${S.rounds.filter(r => r.map === m).length} m.</span><button class="btn sm ghost" data-a="map-rm" data-k="${esc(m)}" aria-label="Retirer ${esc(m)}">✕</button></span></div>`).join('')}
+      <span class="row" style="gap:6px"><span class="muted num" style="font-size:12px">${S.rounds.filter(r => r.map === m).length} g.</span><button class="btn sm ghost" data-a="map-rm" data-k="${esc(m)}" aria-label="Retirer ${esc(m)}">✕</button></span></div>`).join('')}
     <div class="set-row" style="margin-top:8px"><input id="new-map" type="text" maxlength="24" placeholder="Ajouter une map (ex. Rust)" autocomplete="off"><button class="btn" data-a="map-add">Ajouter</button></div>
   </div>
   <h2 class="sec">Code admin <span>protège cet onglet</span></h2>
@@ -1463,7 +1479,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-161724';
+const APP_VERSION = '20261022-165505';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
