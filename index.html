@@ -507,10 +507,11 @@ async function handlePhoto(file) {
     const res = await window.readScoreboard(img.b64, 'image/jpeg', aiPrompt());
     if (U.draft !== draft) return;
     Object.assign(draft, fromAI(res), {status: 'review'});
-    if (!draft.players.length) { draft.error = 'Aucun joueur lu sur la photo. Vérifie qu’on voit bien tout le tableau, ou remplis à la main.'; draft.players = presetPlayers(); }
+    if (!draft.players.length) Object.assign(draft, {status: 'error', error: 'Aucun joueur lu sur la photo. Reprends-la de face, avec tout le tableau des scores visible et sans reflet.'});
   } catch (e) {
     if (U.draft !== draft) return;
-    Object.assign(draft, {status: 'review', ai: false, error: `Lecture automatique impossible (${e && e.message ? e.message : e}). Remplis à la main ou réessaie avec une photo plus nette.`, players: presetPlayers(), map: (S.draw && S.draw.map) || S.roster.maps[0]});
+    const msg = e && e.message ? e.message : String(e);
+    Object.assign(draft, {status: 'error', error: /quota|429|exhaust/i.test(msg) ? 'Trop de photos envoyées d’un coup : attends une minute et réessaie.' : `La photo n’a pas pu être lue (${msg}). Réessaie avec une photo plus nette.`});
   }
   render();
 }
@@ -542,13 +543,21 @@ function vSaisie() {
   const d = U.draft, n = nextNum(), last = lastRound();
   const local = mode === 'local' ? `<div class="notice" style="margin-bottom:12px">Mode local : les données restent sur cet appareil.</div>` : '';
   const lastLine = last ? `<div class="muted" style="font-size:13px">Dernière manche : #${last.n} · ${esc(last.map)} · ${ago(roundTime(last))}</div>` : '';
+  const pickers = `
+    <label class="shot" for="ph-cam"><span class="shot-ic">📸</span><b>Prendre le tableau des scores en photo</b><span class="muted">Ouvre l’appareil photo. L’IA lit pseudos, kills, poses, désamorçages et points.</span></label>
+    <input id="ph-cam" type="file" accept="image/*" capture="environment" data-a="photo" hidden>
+    <label class="btn block" for="ph-gal" style="justify-content:center">🖼️ Ajouter depuis la galerie photo</label>
+    <input id="ph-gal" type="file" accept="image/*" data-a="photo" hidden>`;
   if (!d) return `${local}
   <h2 class="sec">Manche ${n} <span>une photo du tableau des scores suffit</span></h2>
+  <div class="grid">${pickers}${lastLine}</div>`;
+  if (d.status === 'error') return `${local}
+  <h2 class="sec">Photo non lue</h2>
   <div class="grid">
-    <label class="shot" for="ph-cam"><span class="shot-ic">📸</span><b>Prendre le tableau des scores en photo</b><span class="muted">L’IA lit pseudos, kills, poses, désamorçages et points. Tu vérifies, tu valides.</span></label>
-    <input id="ph-cam" type="file" accept="image/*" capture="environment" data-a="photo" hidden>
-    <div class="row"><label class="btn" for="ph-gal">🖼️ Choisir dans la galerie</label><input id="ph-gal" type="file" accept="image/*" data-a="photo" hidden><button class="btn ghost" data-a="dr-manual">Saisie manuelle</button></div>
-    ${lastLine}
+    <div class="notice" style="border-color:var(--t2)">${esc(d.error)}</div>
+    ${d.thumb ? `<div class="panel"><img src="${d.thumb}" class="thumb" alt="Photo envoyée"></div>` : ''}
+    ${pickers}
+    <button class="btn ghost" data-a="dr-cancel">Annuler</button>
   </div>`;
   if (d.status === 'reading') return `<h2 class="sec">Lecture du tableau…</h2>
   <div class="panel grid" style="justify-items:center;text-align:center">
@@ -567,7 +576,7 @@ function vSaisie() {
     <div class="steps">${STATS.map(s => stepper('dr', String(i), s.f, p[s.f], s.step)).join('')}</div></div>`).join('');
   const addable = names.filter(x => !d.players.some(p => p.name === x));
   return `${local}
-  <h2 class="sec">Vérifie la manche ${n} <span>${d.ai ? 'lue par l’IA · corrige si besoin' : 'saisie manuelle'}</span></h2>
+  <h2 class="sec">Vérifie la manche ${n} <span>lue par l’IA · corrige si besoin</span></h2>
   <div class="grid">
     ${warn ? `<div class="notice">${warn}<label class="row" style="margin-top:8px;gap:8px"><input type="checkbox" id="dr-ok8" data-a="dr-ok8" ${d.ok8 ? 'checked' : ''}> Oui, c’est bien une nouvelle manche</label></div>` : ''}
     ${d.error ? `<div class="notice" style="border-color:var(--t2)">${esc(d.error)}</div>` : ''}
@@ -762,7 +771,7 @@ function vTirage() {
       <div class="draw-team t2"><h3>Équipe 2 · ${d.t2.length}</h3><ul>${d.t2.map(x => `<li>${label(x)}</li>`).join('')}</ul></div>
     </div>${d.spectator ? `<div class="panel">👀 Spectateur : <b>${label(d.spectator)}</b></div>` : ''}` : ''}
     ${d.map ? `<div class="panel"><span class="lbl">Map tirée</span><div class="bigmap">${esc(d.map)}</div></div>` : ''}
-    <button class="btn primary block" data-a="d-use">Lancer la manche avec ce tirage</button>
+    <button class="btn primary block" data-a="d-use">📸 C’est parti : photo du tableau à la fin</button>
   </div>` : ''}`;
 }
 
@@ -886,7 +895,6 @@ document.addEventListener('click', e => {
   switch (a) {
     case 'tab': U.tab = v; U.confirm = null; lsSet('codlan.tab', v); render(); window.scrollTo({top: 0}); break;
     case 'cancel': U.confirm = null; render(); break;
-    case 'dr-manual': U.draft = {status: 'review', ai: false, photoAt: null, players: presetPlayers(), map: (S.draw && S.draw.map) || S.roster.maps[0], winner: 0}; render(); break;
     case 'dr-cancel': U.draft = null; render(); break;
     case 'dr-win': U.draft.winner = +v; render(); break;
     case 'dr-team': { const p = U.draft.players[+k]; p.team = 3 - p.team; render(); break; }
@@ -915,9 +923,7 @@ document.addEventListener('click', e => {
     case 'd-teams': drawTeams(); break;
     case 'd-map': drawMap(); break;
     case 'd-use': {
-      const d = S.draw || {};
-      U.draft = {status: 'review', ai: false, photoAt: null, players: presetPlayers(), map: d.map || S.roster.maps[0], winner: 0};
-      U.tab = 'saisie'; render(); window.scrollTo({top: 0}); toast('Équipes envoyées dans la saisie'); break;
+      U.tab = 'saisie'; render(); window.scrollTo({top: 0}); break;
     }
     case 'adm-unlock': {
       const code = $('#adm-code').value.trim();
