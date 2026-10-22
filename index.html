@@ -1378,12 +1378,12 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-144918';
+const APP_VERSION = '20261022-145054';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
     const html = await (await fetch('./?v=' + Date.now(), {cache: 'no-store'})).text();
-    const m = html.match(/const APP_VERSION = '20261022-144918']+)'/);
+    const m = html.match(/APP_VERSION\s*=\s*'(\d{8}-\d{6})'/);
     if (m && m[1] !== APP_VERSION) $('#update').hidden = false;
   } catch (e) {}
 }

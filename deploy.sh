@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 v=$(date +%Y%m%d-%H%M%S)
-sed -i "s/const APP_VERSION = '[^']*'/const APP_VERSION = '$v'/" index.html
+sed -i "0,/^const APP_VERSION = '[^']*';/s//const APP_VERSION = '$v';/" index.html   # 1re occurrence, ligne de déclaration uniquement
 git add -A
 git commit -q -m "${1:-Mise à jour}" -m "Version $v"
 git push -q
