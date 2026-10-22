@@ -228,6 +228,8 @@ html,body{margin:0}
   @keyframes wobble{0%,100%{transform:rotate(0) scale(1)}25%{transform:rotate(-4deg) scale(1.03)}75%{transform:rotate(4deg) scale(1.03)}}
   @keyframes slam{from{transform:scale(2.2);opacity:0;letter-spacing:.3em}to{transform:none;opacity:1}}
 }
+/* iPhone (écran d'accueil, barre d'état translucide) : bande opaque sous l'heure/batterie pour que le contenu ne passe pas dessous */
+body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area-inset-top,0px);background:var(--bg);z-index:30;pointer-events:none}
 .savebar{position:sticky;bottom:0;z-index:4;margin-top:16px;padding-block:10px calc(10px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,var(--bg) 18%)}
 .blocker{border:1px solid var(--t2);background:var(--t2-soft);color:var(--fg);border-radius:10px;padding:10px 12px;font-weight:700;font-size:14px}
 .update{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:22;max-width:calc(100% - 32px);
@@ -869,9 +871,11 @@ function vJoueur() {
   if (!U.selPlayer || !names.includes(U.selPlayer)) U.selPlayer = names.includes(U.me) ? U.me : names[0];
   const {list} = compute(S.rounds);
   const s = list.find(x => x.name === U.selPlayer);
-  const head = `<div class="panel"><label class="lbl" for="sel-player">Joueur</label>${playerSelect('sel-player', U.selPlayer, names)}</div>`;
+  const head = `<div class="panel row" style="flex-wrap:nowrap;gap:12px">
+    <button type="button" class="squad-card" style="padding:6px;flex:none" data-a="pl" data-k="${esc(U.selPlayer)}" aria-label="Fiche de ${esc(U.selPlayer)}">${stickers[U.selPlayer] ? `<img src="${stickers[U.selPlayer]}" alt="">` : `<span class="squad-emo">${esc(emojiOf(U.selPlayer))}</span>`}</button>
+    <div style="flex:1;min-width:0"><label class="lbl" for="sel-player">Joueur</label>${playerSelect('sel-player', U.selPlayer, names)}</div></div>`;
   if (!s) return head + `<div class="emptystate" style="margin-top:12px"><b>Pas encore joué</b>${esc(U.selPlayer)} n’apparaît dans aucune manche validée.</div>`;
-  const partners = Object.entries(s.partners).map(([n, v]) => ({n, ...v})).sort((a, b) => b.n - a.n || b.w - a.w);
+  const partners = Object.entries(s.partners).map(([name, v]) => ({name, n: v.n, w: v.w})).sort((a, b) => b.n - a.n || b.w - a.w);
   const maps = Object.entries(s.maps).map(([n, v]) => ({n, ...v, avg: v.points / v.m})).sort((a, b) => b.w - a.w || a.l - b.l);
   const byAvg = [...maps].sort((a, b) => b.avg - a.avg);
   const fav = byAvg[0], hate = byAvg.length > 1 ? byAvg[byAvg.length - 1] : null;
@@ -892,7 +896,7 @@ function vJoueur() {
   </div>
   <div class="grid g2">
     <div><h2 class="sec">Partenaires <span>même équipe</span></h2>
-      <div class="panel scroll">${partners.length ? `<table class="t"><thead><tr><th>Joueur</th><th class="r">Ensemble</th><th class="r">Victoires</th></tr></thead><tbody>${partners.map(p => `<tr><td>${plink(p.n)}</td><td class="r">${p.n}</td><td class="r">${p.w}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Aucun partenaire pour l’instant</div>'}</div></div>
+      <div class="panel scroll">${partners.length ? `<table class="t"><thead><tr><th>Joueur</th><th class="r">Ensemble</th><th class="r">Victoires</th></tr></thead><tbody>${partners.map(p => `<tr><td>${plink(p.name)}</td><td class="r">${p.n}</td><td class="r">${p.w}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Aucun partenaire pour l’instant</div>'}</div></div>
     <div><h2 class="sec">Maps <span>classées par victoires</span></h2>
       <div class="panel scroll"><table class="t"><thead><tr><th>Map</th><th class="r">V</th><th class="r">D</th><th class="r">Moy. pts</th></tr></thead><tbody>${maps.map(m => `<tr><td>${esc(m.n)}</td><td class="r" style="color:var(--green)">${m.w}</td><td class="r" style="color:var(--t2)">${m.l}</td><td class="r">${fr1(m.avg)}</td></tr>`).join('')}</tbody></table></div></div>
   </div>`;
@@ -1396,7 +1400,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-152011';
+const APP_VERSION = '20261022-153518';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
