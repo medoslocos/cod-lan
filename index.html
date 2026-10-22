@@ -228,6 +228,8 @@ html,body{margin:0}
   @keyframes wobble{0%,100%{transform:rotate(0) scale(1)}25%{transform:rotate(-4deg) scale(1.03)}75%{transform:rotate(4deg) scale(1.03)}}
   @keyframes slam{from{transform:scale(2.2);opacity:0;letter-spacing:.3em}to{transform:none;opacity:1}}
 }
+.savebar{position:sticky;bottom:0;z-index:4;margin-top:16px;padding-block:10px calc(10px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,var(--bg) 18%)}
+.blocker{border:1px solid var(--t2);background:var(--t2-soft);color:var(--fg);border-radius:10px;padding:10px 12px;font-weight:700;font-size:14px}
 .update{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:22;max-width:calc(100% - 32px);
   border:0;border-radius:999px;background:var(--gold);color:#111;font-weight:800;padding:12px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5);cursor:pointer}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
@@ -682,21 +684,36 @@ function renameMap(oldName, value) {
 async function saveDraft() {
   const d = U.draft;
   const names = d.players.map(p => p.name);
-  if (!d.players.length) return toast('Ajoute au moins un joueur');
-  if (names.some(n => !n)) return toast('Choisis qui est chaque joueur (menu « Qui est-ce ? »)');
-  if (new Set(names).size !== names.length) return toast('Un joueur apparaît deux fois');
-  if (!d.players.some(p => p.team === 1) || !d.players.some(p => p.team === 2)) return toast('Il faut au moins un joueur dans chaque équipe');
-  if (d.winner !== 1 && d.winner !== 2) return toast('Choisis l’équipe gagnante');
-  if (gapWarning(d) && !d.ok8) return toast('Confirme que c’est bien une nouvelle manche');
-  if (duplicateOf(d) && !d.okDup) return toast('Doublon probable : vérifie avant de valider');
+  // Un blocage s'affiche en rouge juste au-dessus du bouton (le toast seul passait inaperçu)
+  const block = m => { d.blocker = m; render(); toast(m); const el = $('#dr-blocker'); if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'}); };
+  d.blocker = '';
+  if (!d.players.length) return block('Ajoute au moins un joueur');
+  if (names.some(n => !n)) return block('Choisis qui est chaque joueur (menu « Qui est-ce ? »)');
+  if (new Set(names).size !== names.length) return block('Un joueur apparaît deux fois');
+  if (!d.players.some(p => p.team === 1) || !d.players.some(p => p.team === 2)) return block('Il faut au moins un joueur dans chaque équipe');
+  if (d.winner !== 1 && d.winner !== 2) return block('Choisis l’équipe gagnante');
+  if (gapWarning(d) && !d.ok8) return block('Confirme que c’est bien une nouvelle manche');
+  if (duplicateOf(d) && !d.okDup) return block('Doublon probable : vérifie avant de valider');
   const typed = $('#dr-mapname'); if (typed) d.map = cleanMap(typed.value);
-  if (!d.map) return toast('Écris le nom de la map');
+  if (!d.map) return block('Écris le nom de la map');
   d.map = S.roster.maps.find(m => norm(m) === norm(d.map)) || d.map;   // « rust » = « Rust » déjà connue
   const n = nextNum();
   const players = d.players.map(p => ({name: p.name, team: p.team, kills: +p.kills || 0, poses: +p.poses || 0, desam: +p.desam || 0, points: +p.points || 0}));
   const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  U.draft = null; render();
-  await write('rounds/' + id, doc => doc.set({n, map: d.map, winner: d.winner, createdAt: Date.now(), photoAt: d.photoAt || Date.now(), phash: d.phash || '', bots: d.bots || {1: 0, 2: 0}, source: 'photo', players}));
+  const body = {n, map: d.map, winner: d.winner, createdAt: Date.now(), photoAt: d.photoAt || Date.now(), phash: d.phash || '', bots: d.bots || {1: 0, 2: 0}, source: 'photo', players};
+  // On attend la confirmation du serveur : la manche n'est annoncée « enregistrée » que si elle l'est vraiment
+  U.draft = null; U.sending = n; render(); window.scrollTo({top: 0});
+  const slow = setTimeout(() => { if (U.sending === n) toast('Envoi lent… garde l’appli ouverte, ça part dès que le réseau revient'); }, 6000);
+  try {
+    if (!store) throw new Error('pas encore connecté');
+    await store.doc('rounds/' + id).set(body);
+  } catch (e) {
+    clearTimeout(slow); U.sending = null;
+    U.draft = d; d.error = `La manche n’a PAS été enregistrée (${e && (e.code || e.message) || 'erreur'}). Vérifie ta connexion puis appuie encore sur « Valider ».`;
+    render(); return;
+  }
+  clearTimeout(slow); U.sending = null; render();
+  toast(`✅ Manche ${n} enregistrée pour tout le monde`);
   // Mémorise les pseudos en jeu lus sur la photo (et une map nouvelle) pour la prochaine fois
   let changed = !S.roster.maps.includes(d.map);
   const roster = {...S.roster, maps: changed ? [...S.roster.maps, d.map] : S.roster.maps, players: S.roster.players.map(p => {
@@ -717,6 +734,7 @@ function vSaisie() {
     <label class="btn block" for="ph-gal" style="justify-content:center">🖼️ Ajouter depuis la galerie photo</label>
     <input id="ph-gal" type="file" accept="image/*" data-a="photo" hidden>`;
   if (!d) return `${local}
+  ${U.sending ? `<div class="notice" style="margin-bottom:10px">⏳ Envoi de la manche ${U.sending} en cours… garde l’appli ouverte.</div>` : ''}
   <h2 class="sec">Manche ${n} <span>une photo du tableau des scores suffit</span></h2>
   <div class="grid">${pickers}${lastLine}</div>`;
   if (d.status === 'error') return `${local}
@@ -745,6 +763,7 @@ function vSaisie() {
   const addable = names.filter(x => !d.players.some(p => p.name === x));
   return `${local}
   <h2 class="sec">Vérifie la manche ${n} <span>lue par l’IA · corrige si besoin</span></h2>
+  <div class="notice" style="margin-bottom:10px">⚠️ <b>Pas encore enregistrée.</b> Vérifie les joueurs et les chiffres, puis appuie sur <b>✅ Valider la manche</b> en bas.</div>
   <div class="grid">
     ${warn ? `<div class="notice">${warn}<label class="row" style="margin-top:8px;gap:8px"><input type="checkbox" id="dr-ok8" data-a="dr-ok8" ${d.ok8 ? 'checked' : ''}> Oui, c’est bien une nouvelle manche</label></div>` : ''}
     ${dup ? `<div class="notice" style="border-color:var(--t2);background:var(--t2-soft)">🚫 <b>Doublon probable de la manche #${dup.r.n}</b> (${esc(dup.r.map)}, ${ago(roundTime(dup.r))}) : ${esc(dup.why)}.<label class="row" style="margin-top:8px;gap:8px"><input type="checkbox" id="dr-okdup" data-a="dr-okdup" ${d.okDup ? 'checked' : ''}> Ce n’est pas un doublon, valider quand même</label></div>` : ''}
@@ -767,7 +786,7 @@ function vSaisie() {
   <h2 class="sec">Joueurs <span>${d.players.length} · absents = pas dans la liste</span></h2>
   ${rows ? `<div class="grid">${rows}</div>` : '<div class="emptystate"><b>Aucun joueur</b>Ajoute les joueurs de la manche ci-dessous.</div>'}
   ${addable.length ? `<div style="margin-top:10px"><label class="lbl" for="dr-add">Ajouter un joueur</label><select id="dr-add" data-a="dr-add"><option value="">—</option>${addable.map(x => `<option value="${esc(x)}">${label(x)}</option>`).join('')}</select></div>` : ''}
-  <div class="grid" style="margin-top:16px"><button class="btn primary block" data-a="dr-save">Valider la manche ${n}</button><button class="btn ghost" data-a="dr-cancel">Annuler</button></div>`;
+  <div class="savebar grid">${d.blocker ? `<div id="dr-blocker" class="blocker">⛔ ${esc(d.blocker)}</div>` : ''}<button class="btn primary block" data-a="dr-save">✅ Valider la manche ${n}</button><button class="btn ghost" data-a="dr-cancel">Annuler</button></div>`;
 }
 
 function rankCard(title, list, key, fmt, opts = {}) {
@@ -1377,7 +1396,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-150043';
+const APP_VERSION = '20261022-152011';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
