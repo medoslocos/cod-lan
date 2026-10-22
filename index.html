@@ -261,7 +261,8 @@ const DEFAULT_PLAYERS = ['Jems','Warzoute','Luis91540','ZZ','Medos','LaKrotte','
 // Pseudos en jeu connus (servent à reconnaître les joueurs sur les photos ; complétés automatiquement ensuite)
 const DEFAULT_ALIASES = {LaKrotte: ['LKTR', 'LK'], Warzoute: ['Theo Tete', 'Theo', 'Théo'], ZZ: ['Zizou', 'Japan'], Brillcz: ['Brice'], Guillaume: ['Gui'], Jems: ['Jeremy', 'Jérémy'], Medos: ['medoslocos', 'Mehdi']};
 const DEFAULT_MAPS = ['Highrise','Skidrow','Terminal','Scrapyard','Karachi','Favela'];
-const EMOJIS = ['🎮','👑','👨‍🦲','💀','🔥','🐐','🤡','🐀','🦍','🐍','🥷','🧀','🍔','🍺','💣','🎯','🧠','🐢','🚽','🦖'];
+const EMOJIS = ['🎮','👑','👨‍🦲','💀','🔥','🐐','🤡','🐀','🦍','🐍','🥷','🧀','🍔','🍺','💣','🎯','🧠','🐢','🚽','💩','🦖'];
+const DEFAULT_EMOJIS = {LaKrotte: '💩'};
 const STATS = [
   {f:'kills', label:'Kills'},
   {f:'poses', label:'Poses'},
@@ -334,7 +335,7 @@ function write(path, fn) {
 
 /* ---------- État ---------- */
 const S = {
-  roster: {players: DEFAULT_PLAYERS.map(name => ({name, emoji:'🎮', aliases: [...(DEFAULT_ALIASES[name] || [])]})), maps: [...DEFAULT_MAPS]},
+  roster: {players: DEFAULT_PLAYERS.map(name => ({name, emoji: DEFAULT_EMOJIS[name] || '🎮', aliases: [...(DEFAULT_ALIASES[name] || [])]})), maps: [...DEFAULT_MAPS]},
   current: {map: DEFAULT_MAPS[0], winner: 0, lineup: []},
   liverows: {}, rounds: [], draw: null, loaded: {rounds:false}
 };
