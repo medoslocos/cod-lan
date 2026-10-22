@@ -278,6 +278,23 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .how p{margin:8px 0 0;color:var(--muted)}
 .how b{color:var(--fg)}
 @media (max-width:420px){.gen-row{grid-template-columns:22px 44px minmax(0,1fr) auto;gap:8px;padding:8px 10px}.gface,.gface img{width:44px;height:44px}.gscore{font-size:32px}.gname{font-size:21px}}
+.vote-card{margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.vote-head{display:flex;gap:12px;align-items:center}
+.vote-head h3{margin:0;font-family:var(--f-display);font-size:26px;font-weight:600;letter-spacing:.02em;line-height:1;text-transform:uppercase}
+.vote-e{font-size:38px;line-height:1}
+.vote-lead{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;padding:10px;border-radius:10px;background:linear-gradient(135deg,rgba(242,182,50,.16),transparent 70%);border:1px solid rgba(242,182,50,.45)}
+.vote-lead-p{display:flex;align-items:center;gap:8px;background:none;border:0;padding:0;cursor:pointer;color:inherit;font:inherit}
+.vote-lead-p b{font-family:var(--f-display);font-size:24px;font-weight:600}
+.vl{width:52px;height:52px;object-fit:contain}
+.vl-emo{font-size:38px}
+.vote-lead-t{margin-left:auto;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold)}
+.vote-bars{display:grid;gap:6px;margin-top:10px}
+.vbar{display:grid;grid-template-columns:minmax(70px,auto) minmax(0,1fr) 24px;gap:8px;align-items:center;font-size:13px}
+.vbar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vbar i{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--red) var(--w),var(--line) var(--w))}
+.vbar b{text-align:right}
+.pk{width:44px;height:44px;object-fit:contain}
+.pk-emo{font-size:32px;line-height:44px;height:44px}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -348,7 +365,7 @@ const STATS = [
 ];
 const TABS = [
   ['saisie','Saisie'],['classement','Classement'],['joueur','Joueur'],['map','Maps'],
-  ['manches','Games'],['tirage','Tirage'],['reglages','Réglages']
+  ['manches','Games'],['tirage','Tirage'],['votes','Votes'],['reglages','Réglages']
 ];
 
 /* ---------- Utilitaires ---------- */
@@ -556,7 +573,7 @@ function render() {
 
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { sel = aid && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null; } catch (e) {}
-  const view = {saisie: vSaisie, classement: vClassement, joueur: vJoueur, map: vMap, manches: vManches, tirage: vTirage, reglages: vReglages}[U.tab];
+  const view = {saisie: vSaisie, classement: vClassement, joueur: vJoueur, map: vMap, manches: vManches, tirage: vTirage, votes: vVotes, reglages: vReglages}[U.tab];
   $('#main').innerHTML = view();
   if (aid) { const el = document.getElementById(aid); if (el) { el.focus({preventScroll:true}); if (sel) try { el.setSelectionRange(sel[0], sel[1]); } catch (e) {} } }
 }
@@ -1129,6 +1146,53 @@ function vTirage() {
   </div>` : ''}`;
 }
 
+/* ---------- Votes anonymes ----------
+   Chaque téléphone a un identifiant aléatoire (jamais relié à un nom) : 1 vote par catégorie, modifiable à volonté. */
+const VOTE_CATS = [
+  {id: 'campeur', e: '🏕️', t: 'Le plus gros campeur', sub: 'Toujours planqué dans son coin'},
+  {id: 'kar', e: '🎯', t: 'Le roi de la KAR', sub: 'Un tir, un mort'},
+  {id: 'bouclier', e: '🛡️', t: 'Le roi du bouclier anti-émeute', sub: 'Le tank de la bande'},
+  {id: 'cronus', e: '🕵️', t: 'Le plus suspecté d’avoir un Cronus', sub: 'Trop fort pour être honnête'},
+];
+const voterId = (() => {
+  let v = lsGet('codlan.voter');
+  if (!v) { v = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join(''); lsSet('codlan.voter', v); }
+  return v;
+})();
+const voteDocId = (cat, voter) => `live/vote_${cat}_${voter}`;
+function castVote(cat, name) {
+  const mine = ((S.votes || {})[cat] || {})[voterId];
+  const votes = S.votes || (S.votes = {});
+  const m = votes[cat] || (votes[cat] = {});
+  if (mine === name) {
+    delete m[voterId]; render();
+    write(voteDocId(cat, voterId), d => d.delete()).then(() => toast('Vote retiré'));
+  } else {
+    m[voterId] = name; render();
+    write(voteDocId(cat, voterId), d => d.set({cat, voter: voterId, choice: name, at: Date.now()})).then(() => toast(mine ? 'Vote changé' : 'A voté ! 🗳️'));
+  }
+}
+function vVotes() {
+  const names = [...playerNames()].sort((a, b) => a.localeCompare(b, 'fr', {sensitivity: 'base'}));
+  const face = (n, cls) => stickers[n] ? `<img class="${cls}" src="${stickers[n]}" alt="">` : `<span class="${cls}-emo">${esc(emojiOf(n))}</span>`;
+  return `<div class="notice">🗳️ <b>Votes 100 % anonymes.</b> 1 vote par catégorie, modifiable quand tu veux. Retouche ton choix pour retirer ton vote.</div>
+  ${VOTE_CATS.map(c => {
+    const m = (S.votes || {})[c.id] || {}, mine = m[voterId];
+    const counts = {}; Object.values(m).forEach(n => { counts[n] = (counts[n] || 0) + 1; });
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const top = ranked.length ? ranked[0][1] : 0, leaders = ranked.filter(r => r[1] === top).map(r => r[0]);
+    return `<section class="vote-card">
+      <div class="vote-head"><span class="vote-e">${c.e}</span><div><h3>${esc(c.t)}</h3><div class="muted" style="font-size:13px">${esc(c.sub)} · ${total} vote${total > 1 ? 's' : ''}</div></div></div>
+      ${total ? `<div class="vote-lead">${leaders.map(n => `<button type="button" class="vote-lead-p" data-a="pl" data-k="${esc(n)}">${face(n, 'vl')}<b>${esc(n)}</b></button>`).join('')}<div class="vote-lead-t">${leaders.length > 1 ? 'Égalité' : 'En tête'} · ${top} vote${top > 1 ? 's' : ''}</div></div>
+      <div class="vote-bars">${ranked.map(([n, k]) => `<div class="vbar"><span>${esc(n)}</span><i style="--w:${Math.round(100 * k / total)}%"></i><b class="num">${k}</b></div>`).join('')}</div>`
+      : '<div class="empty">Personne n’a encore voté. Lance-toi !</div>'}
+      <div class="lbl" style="margin-top:12px">${mine ? `Ton vote : ${esc(mine)} · touche un autre joueur pour changer` : 'Ton vote'}</div>
+      <div class="picker">${names.map(n => `<button type="button" class="pick${mine === n ? ' on' : ''}" data-a="vote" data-k="${c.id}" data-v="${esc(n)}" aria-pressed="${mine === n}">${face(n, 'pk')}<span class="pick-n">${esc(n)}</span></button>`).join('')}</div>
+    </section>`;
+  }).join('')}`;
+}
+
 /* ---------- Code admin (verrouille Réglages) ---------- */
 let adminHash = null, adminLoaded = false;
 // Déverrouillage valable pour la session seulement : le code est redemandé à chaque réouverture de l'appli
@@ -1197,7 +1261,7 @@ function vReglages() {
   </div>
   <h2 class="sec">Remise à zéro <span>après un test, avant le week-end</span></h2>
   <div class="panel grid" style="max-width:420px">
-    <div class="muted" style="font-size:13px">Efface toutes les games (${S.rounds.length}) et le tirage. Joueurs, pseudos en jeu, maps et musique sont gardés.</div>
+    <div class="muted" style="font-size:13px">Efface toutes les games (${S.rounds.length}), le tirage et les votes. Joueurs, pseudos en jeu, maps et musique sont gardés.</div>
     ${U.confirm === 'wipe'
       ? `<div class="row"><button class="btn danger" data-a="wipe-ok">Oui, tout effacer</button><button class="btn ghost" data-a="cancel">Annuler</button></div>`
       : `<button class="btn danger" data-a="wipe">Effacer toutes les games</button>`}
@@ -1302,6 +1366,7 @@ document.addEventListener('click', e => {
     case 'dr-step': { const p = U.draft.players[+k], f = b.dataset.f; p[f] = Math.max(0, (+p[f] || 0) + (+b.dataset.d)); render(); break; }
     case 'dr-save': saveDraft(); break;
     case 'pl': showPlayer(k); break;
+    case 'vote': castVote(k, v); break;
     case 'pick-player': if (U.selPlayer === k) showPlayer(k); else { U.selPlayer = k; render(); } break;
     case 'pl-close': closePop(); break;
     case 'pl-open': closePop(); U.selPlayer = k; U.tab = 'joueur'; render(); window.scrollTo({top: 0}); break;
@@ -1375,7 +1440,7 @@ document.addEventListener('click', e => {
       U.confirm = null;
       const ids = S.rounds.map(r => r.id);
       S.rounds = []; S.draw = null; seenRounds = new Set(); render();
-      Promise.all([...ids.map(id => write('rounds/' + id, d => d.delete())), write('live/draw', d => d.delete())]).then(() => toast(`${ids.length} game${ids.length > 1 ? 's' : ''} effacée${ids.length > 1 ? 's' : ''}`));
+      Promise.all([...ids.map(id => write('rounds/' + id, d => d.delete())), write('live/draw', d => d.delete()), ...Object.entries(S.votes || {}).flatMap(([cat, m]) => Object.keys(m).map(voter => write(voteDocId(cat, voter), d => d.delete())))]).then(() => toast(`${ids.length} game${ids.length > 1 ? 's' : ''} effacée${ids.length > 1 ? 's' : ''}`));
       break;
     }
     case 'adm-lock': ssSet('codlan.admin', ''); lsSet('codlan.admin', ''); render(); toast('Réglages verrouillés sur cet appareil'); break;
@@ -1567,7 +1632,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-171820';
+const APP_VERSION = '20261022-174319';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
@@ -1592,6 +1657,15 @@ function subscribe() {
   store.doc('live/current').onSnapshot(s => {
     if (s.exists) { const d = s.data(); S.current = {map: d.map || S.roster.maps[0], winner: d.winner || 0, lineup: (d.lineup || []).map(l => ({name: l.name, team: l.team === 2 ? 2 : 1}))}; }
     render();
+  }, onErr);
+  store.collection('live').onSnapshot(q => {
+    const v = {};
+    q.docs.forEach(doc => {
+      if (!doc.id.startsWith('vote_')) return;
+      const x = doc.data(); if (!x || !x.cat || !x.voter || !x.choice) return;
+      (v[x.cat] || (v[x.cat] = {}))[x.voter] = x.choice;
+    });
+    S.votes = v; if (U.tab === 'votes') render();
   }, onErr);
   store.doc('live/draw').onSnapshot(s => { S.draw = s.exists ? {...s.data()} : null; render(); }, onErr);
   store.collection('liverows').onSnapshot(q => {
