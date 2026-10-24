@@ -21,10 +21,25 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebas
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-ai.js';
 if (window.FIREBASE_CONFIG) {
   const ai = getAI(initializeApp(window.FIREBASE_CONFIG, 'ai'), { backend: new GoogleAIBackend() });
-  const model = getGenerativeModel(ai, { model: 'gemini-3.5-flash', generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
+  // Offre gratuite Gemini : quota journalier PAR modèle (20/jour pour Flash). On passe au modèle suivant quand l'un est épuisé.
+  const MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+  const cfg = { responseMimeType: 'application/json', temperature: 0 };
+  const exhausted = new Set();
+  const isQuota = e => /429|quota|exhaust|RESOURCE/i.test(String(e && e.message));
   window.readScoreboard = async (data, mimeType, prompt) => {
-    const r = await model.generateContent([prompt, { inlineData: { data, mimeType } }]);
-    return JSON.parse(r.response.text().replace(/^\s*```(?:json)?|```\s*$/g, '').trim());
+    let last;
+    for (const name of MODELS) {
+      if (exhausted.has(name)) continue;
+      try {
+        const r = await getGenerativeModel(ai, { model: name, generationConfig: cfg }).generateContent([prompt, { inlineData: { data, mimeType } }]);
+        return JSON.parse(r.response.text().replace(/^\s*```(?:json)?|```\s*$/g, '').trim());
+      } catch (e) {
+        last = e;
+        if (!isQuota(e)) throw e;
+        if (/per day|daily/i.test(String(e.message))) exhausted.add(name);   // quota du jour : inutile de réessayer ce modèle
+      }
+    }
+    throw last || new Error('quota');
   };
 }
 </script>
@@ -730,7 +745,11 @@ async function handlePhoto(file) {
   } catch (e) {
     if (U.draft !== draft) return;
     const msg = e && e.message ? e.message : String(e);
-    Object.assign(draft, {status: 'error', error: /quota|429|exhaust/i.test(msg) ? 'Trop de photos envoyées d’un coup : attends une minute et réessaie.' : `La photo n’a pas pu être lue (${msg}). Réessaie avec une photo plus nette.`});
+    const quota = /quota|429|exhaust/i.test(msg), daily = /per day|daily/i.test(msg);
+    Object.assign(draft, {status: 'error', error: !quota
+      ? `La photo n’a pas pu être lue (${msg}). Réessaie avec une photo plus nette.`
+      : daily ? 'Limite gratuite de lecture de photos atteinte pour aujourd’hui (quota Google). Préviens Medos : ça revient demain, ou il peut augmenter la limite.'
+      : 'Trop de photos envoyées d’un coup : attends une minute et réessaie.'});
   }
   render();
 }
@@ -1632,7 +1651,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261022-174319';
+const APP_VERSION = '20261024-200124';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
