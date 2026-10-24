@@ -310,6 +310,11 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .vbar b{text-align:right}
 .pk{width:44px;height:44px;object-fit:contain}
 .pk-emo{font-size:32px;line-height:44px;height:44px}
+.score-in{display:flex;align-items:center;gap:8px}
+.score-in input{width:64px;text-align:center;font-family:var(--f-display);font-size:24px;padding:6px}
+.score-in .t1{color:var(--t1);font-weight:700;font-size:13px}
+.score-in .t2{color:var(--t2);font-weight:700;font-size:13px}
+.firsts .rank:first-child{border-color:rgba(242,182,50,.6);background:linear-gradient(160deg,rgba(242,182,50,.14),var(--panel) 55%)}
 .squad{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .squad-card{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;min-width:0}
 .squad-card img{width:64px;height:64px;object-fit:contain}
@@ -543,9 +548,19 @@ function compute(rounds) {
         won ? d.w++ : d.l++;
       }
     }
+    // « Premiers » de la game : meilleur score (MVP), meilleur de son équipe, plus de kills (égalités comptées pour chacun)
+    const topPts = Math.max(...r.players.map(p => +p.points || 0)), topK = Math.max(...r.players.map(p => +p.kills || 0));
+    const teamTop = {1: 0, 2: 0}; r.players.forEach(p => { teamTop[p.team] = Math.max(teamTop[p.team], +p.points || 0); });
+    const sc = r.score, wsc = sc ? +sc[r.winner] : NaN, lsc = sc ? +sc[3 - r.winner] : NaN;
+    const shutout = sc && lsc === 0 && wsc >= 6;                    // 6-0 (ou plus) : fessée
     for (const p of r.players) {
       const s = get(p.name), won = p.team === r.winner;
       s.m++; won ? s.w++ : s.l++;
+      if (r.players.length && (+p.points || 0) === topPts) s.mvp = (s.mvp || 0) + 1;
+      if ((+p.points || 0) === teamTop[p.team]) s.teamTop = (s.teamTop || 0) + 1;
+      if (r.players.length && (+p.kills || 0) === topK) s.topKill = (s.topKill || 0) + 1;
+      if (sc) s.scored = (s.scored || 0) + 1;
+      if (shutout) won ? s.shutWon = (s.shutWon || 0) + 1 : s.shutLost = (s.shutLost || 0) + 1;
       STATS.forEach(({f}) => s[f] += (+p[f] || 0));
       const mine = size[p.team], theirs = size[3 - p.team];
       mine > theirs ? s.sup++ : mine < theirs ? s.inf++ : s.eq++;
@@ -559,6 +574,7 @@ function compute(rounds) {
     }
   }
   const list = Object.values(P);
+  list.forEach(s => { ['mvp', 'teamTop', 'topKill', 'scored', 'shutWon', 'shutLost'].forEach(k => s[k] = s[k] || 0); s.mvpRate = s.m ? s.mvp / s.m : 0; });
   list.forEach(s => { STATS.forEach(({f}) => s['avg_' + f] = s.m ? s[f] / s.m : 0); s.wr = s.m ? s.w / s.m : 0; });
   /* Équité : moyenne ajustée = (total + K games "fantômes" à la moyenne du groupe) / (games + K).
      Peu de games => tiré vers la moyenne ; beaucoup de games => quasi la vraie moyenne. */
@@ -680,7 +696,8 @@ Joueurs de l'appli :
 ${roster}
 Pour chaque ligne, "match" = le nom exact d'un joueur de l'appli qui correspond au pseudo en jeu (ressemblance, initiales, abréviation, alias connu), sinon null. Un même joueur de l'appli ne peut apparaître qu'une fois.
 Les bots (joueurs contrôlés par le jeu, souvent nommés "Bot", "[BOT]…" ou avec un nom générique) : mets "bot": true, sinon false.
-Réponds uniquement en JSON : {"map": string|null, "winner": 1|2|null, "players": [{"gamertag": string, "match": string|null, "bot": boolean, "team": 1|2, "points": int, "kills": int, "deaths": int, "plants": int, "defuses": int}]}`;
+Lis aussi le score final en manches de chaque équipe si visible (ex. 6 et 0, 6 et 4) : "score": {"team1": int|null, "team2": int|null}.
+Réponds uniquement en JSON : {"map": string|null, "winner": 1|2|null, "score": {"team1": int|null, "team2": int|null}, "players": [{"gamertag": string, "match": string|null, "bot": boolean, "team": 1|2, "points": int, "kills": int, "deaths": int, "plants": int, "defuses": int}]}`;
 }
 function fromAI(res) {
   const names = playerNames(), used = new Set();
@@ -701,7 +718,10 @@ function fromAI(res) {
   // Map inconnue lue sur la photo : on la propose telle quelle, elle sera ajoutée à la liste à la validation
   const pretty = mapRead.toLowerCase().replace(/(^|[\s-])\S/g, c => c.toUpperCase());
   const map = known || (mapRead && norm(mapRead) ? pretty : '') || (S.draw && S.draw.map) || S.roster.maps[0];
-  return {players, bots, map, mapRead, winner: res && (res.winner === 1 || res.winner === 2) ? res.winner : 0};
+  const sc = res && res.score ? {1: Number.isInteger(res.score.team1) ? res.score.team1 : null, 2: Number.isInteger(res.score.team2) ? res.score.team2 : null} : {1: null, 2: null};
+  let winner = res && (res.winner === 1 || res.winner === 2) ? res.winner : 0;
+  if (!winner && sc[1] != null && sc[2] != null && sc[1] !== sc[2]) winner = sc[1] > sc[2] ? 1 : 2;
+  return {players, bots, map, mapRead, winner, score: sc};
 }
 /* Date de prise de vue lue dans l'EXIF du JPEG (DateTimeOriginal), sinon null */
 async function exifDate(file) {
@@ -790,6 +810,8 @@ async function saveDraft() {
   const players = d.players.map(p => ({name: p.name, team: p.team, kills: +p.kills || 0, poses: +p.poses || 0, desam: +p.desam || 0, points: +p.points || 0}));
   const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const body = {n, map: d.map, winner: d.winner, createdAt: Date.now(), photoAt: d.photoAt || Date.now(), phash: d.phash || '', bots: d.bots || {1: 0, 2: 0}, source: 'photo', players};
+  const scoreOk = d.score && Number.isInteger(d.score[1]) && Number.isInteger(d.score[2]);
+  if (scoreOk) body.score = {1: d.score[1], 2: d.score[2]};
   // On attend la confirmation du serveur : la game n'est annoncée « enregistrée » que si elle l'est vraiment
   U.draft = null; U.sending = n; render(); window.scrollTo({top: 0});
   const slow = setTimeout(() => { if (U.sending === n) toast('Envoi lent… garde l’appli ouverte, ça part dès que le réseau revient'); }, 6000);
@@ -865,6 +887,7 @@ function vSaisie() {
                <input id="dr-mapname" type="text" maxlength="30" value="${esc(d.map)}" data-a="dr-mapname" placeholder="ex. Rust" autocomplete="off">
                <div class="muted" style="font-size:12px;margin-top:4px">${d.mapRead ? `Lu sur la photo : « ${esc(d.mapRead)} ». ` : ''}Elle sera ajoutée à la liste à la validation, et toutes les stats (Maps, Tirage, fiches joueurs) en tiendront compte.</div>`
             : d.mapRead ? `<div class="muted" style="font-size:12px;margin-top:4px">Lu sur la photo : ${esc(d.mapRead)}</div>` : ''}</div>
+        <div><span class="lbl">Score (manches)</span><div class="score-in"><span class="t1">Éq. 1</span><input id="dr-sc1" type="number" inputmode="numeric" min="0" max="20" value="${d.score && d.score[1] != null ? d.score[1] : ''}" data-a="dr-score" data-k="1" aria-label="Score équipe 1"><b>–</b><input id="dr-sc2" type="number" inputmode="numeric" min="0" max="20" value="${d.score && d.score[2] != null ? d.score[2] : ''}" data-a="dr-score" data-k="2" aria-label="Score équipe 2"><span class="t2">Éq. 2</span></div></div>
         <div><span class="lbl">Équipe gagnante</span><div class="seg"><button class="${d.winner === 1 ? 'on1' : ''}" data-a="dr-win" data-v="1">Équipe 1</button><button class="${d.winner === 2 ? 'on2' : ''}" data-a="dr-win" data-v="2">Équipe 2</button></div></div>
         ${balanceLine(d.players, d.bots)}
         <div class="row" style="gap:6px;font-size:13px"><span class="muted">Bots :</span>
@@ -997,6 +1020,19 @@ function vClassementDetail() {
     ${rankCard('Victoires', list, 'w', s => s.w)}
     ${rankCard('Défaites', list, 'l', s => s.l)}
   </div>
+  <h2 class="sec">🏅 Les meilleurs premiers <span>combien de fois n°1</span></h2>
+  <div class="grid g4 firsts">
+    ${rankCard('👑 MVP de la game · meilleur score', list, 'mvp', s => s.mvp)}
+    ${rankCard('🎖️ N°1 de son équipe', list, 'teamTop', s => s.teamTop)}
+    ${rankCard('🔫 Top kills de la game', list, 'topKill', s => s.topKill)}
+    ${rankCard('📈 % MVP (par game jouée)', list.filter(s => s.mvp), 'mvpRate', s => pct(s.mvpRate))}
+  </div>
+  <h2 class="sec">🧹 Fessées 6-0 <span>${list.some(s => s.scored) ? 'sur les games dont le score est connu' : 'score enregistré à partir de maintenant'}</span></h2>
+  ${list.some(s => s.scored) ? '' : '<div class="notice" style="margin-bottom:10px">Le score des games (6-0, 6-4…) est maintenant lu sur la photo. Pour les anciennes games, ajoute-le dans <b>Games › Modifier</b>.</div>'}
+  <div class="grid g4">
+    ${rankCard('😭 6-0 subis', list, 'shutLost', s => s.shutLost)}
+    ${rankCard('🔥 6-0 infligés', list, 'shutWon', s => s.shutWon)}
+  </div>
   <h2 class="sec">Top &amp; Pire joueur <span>points par game, ajustés</span></h2>
   <div class="hero">
     ${top ? `<div class="award gold"><div class="k">Top joueur de la soirée</div><div class="who">${plink(top.name, true)}</div><div class="sub num">${fr1(top.avg_points)} pts / game · ${top.m} game${top.m > 1 ? 's' : ''}</div><div class="big">👑</div></div>` : '<div class="empty">Personne n’a encore assez de games.</div>'}
@@ -1098,6 +1134,7 @@ function vEdit() {
   return `<div class="round" style="border-color:var(--gold)">
     <div class="round-head"><div class="round-title"><span>#${e.n}</span> Modifier la game</div></div>
     <div class="grid g2"><div><label class="lbl" for="e-map">Map</label><select id="e-map" data-a="e-map">${[...new Set([...S.roster.maps, e.map])].map(m => `<option ${m === e.map ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+    <div><span class="lbl">Score (manches)</span><div class="score-in"><span class="t1">Éq. 1</span><input id="e-sc1" type="number" inputmode="numeric" min="0" max="20" value="${e.score && e.score[1] != null ? e.score[1] : ''}" data-a="e-score" data-k="1" aria-label="Score équipe 1"><b>–</b><input id="e-sc2" type="number" inputmode="numeric" min="0" max="20" value="${e.score && e.score[2] != null ? e.score[2] : ''}" data-a="e-score" data-k="2" aria-label="Score équipe 2"><span class="t2">Éq. 2</span></div></div>
     <div><span class="lbl">Gagnant</span><div class="seg"><button class="${e.winner === 1 ? 'on1' : ''}" data-a="e-win" data-v="1">Équipe 1</button><button class="${e.winner === 2 ? 'on2' : ''}" data-a="e-win" data-v="2">Équipe 2</button></div></div></div>
     <div class="grid" style="margin-top:12px">${e.players.map((p, i) => `<div class="prow t${p.team}">
       <div class="prow-head"><span class="pname">${label(p.name)}</span><span class="row" style="gap:6px">
@@ -1118,7 +1155,7 @@ function vManches() {
     const time = new Date(r.createdAt).toLocaleString('fr-FR', {weekday:'short', hour:'2-digit', minute:'2-digit'});
     return `<div class="round">
       <div class="round-head"><div class="round-title"><span>#${r.n}</span> ${esc(r.map)}</div>
-        <div class="row" style="gap:8px"><span class="win t${r.winner}">Victoire Éq. ${r.winner}</span><span class="muted" style="font-size:12px">${time}</span></div></div>
+        <div class="row" style="gap:8px"><span class="win t${r.winner}">Victoire Éq. ${r.winner}${r.score ? ` · ${r.score[1]}-${r.score[2]}` : ''}</span><span class="muted" style="font-size:12px">${time}</span></div></div>
       <div class="teams">${[1, 2].map(t => `<div class="team t${t}"><div class="win t${t}" style="margin-bottom:4px">Équipe ${t} · ${size[t]} joueur${size[t] > 1 ? 's' : ''}${r.winner === t ? ' · 🏆' : ''}</div>${teamTable(r.players.filter(p => p.team === t))}</div>`).join('')}</div>
       <div class="row" style="margin-top:10px">
         ${U.confirm === 'del:' + r.id
@@ -1414,6 +1451,7 @@ document.addEventListener('click', e => {
       const e2 = U.edit;
       if (!e2.players.some(p => p.team === 1) || !e2.players.some(p => p.team === 2)) return toast('Il faut au moins un joueur dans chaque équipe');
       const {id, ...body} = e2; U.edit = null;
+      if (!(body.score && Number.isInteger(body.score[1]) && Number.isInteger(body.score[2]))) delete body.score;
       S.rounds = S.rounds.map(r => r.id === id ? e2 : r); render();
       write('rounds/' + id, d => d.set(body)).then(() => toast(`Game #${e2.n} corrigée`)); break;
     }
@@ -1507,6 +1545,13 @@ document.addEventListener('change', e => {
     case 'dr-mapname': U.draft.map = cleanMap(el.value); break;
     case 'map-rename': renameMap(el.dataset.k, el.value); break;
     case 'dr-ok8': U.draft.ok8 = el.checked; break;
+    case 'dr-score': case 'e-score': {
+      const t = a === 'dr-score' ? U.draft : U.edit; if (!t) break;
+      const sc = t.score || (t.score = {1: null, 2: null}), v2 = el.value === '' ? null : Math.max(0, Math.min(20, parseInt(el.value, 10) || 0));
+      sc[el.dataset.k] = v2;
+      if (sc[1] != null && sc[2] != null && sc[1] !== sc[2]) t.winner = sc[1] > sc[2] ? 1 : 2;   // le score décide du gagnant
+      render(); break;
+    }
     case 'stk-file': {
       const f = el.files && el.files[0], name = el.dataset.k; el.value = '';
       if (!f || !isAdmin()) break;
@@ -1651,7 +1696,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261024-200124';
+const APP_VERSION = '20261024-224918';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
@@ -1692,7 +1737,7 @@ function subscribe() {
     S.liverows = m; render();
   }, onErr);
   store.collection('rounds').onSnapshot(q => {
-    S.rounds = q.docs.map(d => { const x = d.data(); return {id: d.id, n: x.n || 0, map: x.map, winner: x.winner, createdAt: x.createdAt || 0, photoAt: x.photoAt || 0, phash: x.phash || '', bots: x.bots || {}, source: x.source || '', players: (x.players || []).map(p => ({...zero(p.name), ...p}))}; })
+    S.rounds = q.docs.map(d => { const x = d.data(); return {id: d.id, n: x.n || 0, map: x.map, winner: x.winner, createdAt: x.createdAt || 0, photoAt: x.photoAt || 0, phash: x.phash || '', bots: x.bots || {}, score: x.score && x.score[1] != null && x.score[2] != null ? {1: +x.score[1], 2: +x.score[2]} : null, source: x.source || '', players: (x.players || []).map(p => ({...zero(p.name), ...p}))}; })
       .sort((a, b) => a.createdAt - b.createdAt);
     if (seenRounds) {
       const fresh = S.rounds.filter(r => !seenRounds.has(r.id) && Math.abs(Date.now() - r.createdAt) < 600000);
