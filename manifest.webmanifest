@@ -1,6 +1,6 @@
 {
-  "name": "CoD LAN Tracker",
-  "short_name": "CoD LAN",
+  "name": "LAN CoD",
+  "short_name": "LAN CoD",
   "description": "Stats Search & Destroy du week-end LAN CoD",
   "lang": "fr",
   "start_url": "./",
