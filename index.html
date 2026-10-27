@@ -1333,12 +1333,19 @@ function vReglages() {
 /* ---------- Actions ---------- */
 function saveRoster(roster) { S.roster = roster; render(); return write('config/roster', d => d.set(roster)); }
 
+const DRAW_TOGETHER = [['Brillcz', 'Cronus']];
 function drawTeams() {
   let names = [...U.drawSel].filter(x => playerNames().includes(x));
   if (names.length < 2) return toast('Sélectionne au moins 2 joueurs');
   names = shuffle(names);
+  // Duos inséparables : toujours dans la même équipe quand les deux sont présents
+  const together = DRAW_TOGETHER.filter(([x, y]) => names.includes(x) && names.includes(y));
+  const valid = (a, b) => together.every(([x, y]) => a.includes(x) === a.includes(y));
   let spectator = null;
-  if (U.drawOdd === 'spec' && names.length % 2) spectator = names.pop();
+  if (U.drawOdd === 'spec' && names.length % 2) {
+    const i = names.findIndex(n => !together.some(pair => pair.includes(n)));
+    spectator = names.splice(i < 0 ? names.length - 1 : i, 1)[0];
+  }
   const half = Math.ceil(names.length / 2);
   const botNeeded = U.drawOdd === 'bot' && names.length % 2 === 1;   // l'équipe en sous-nombre reçoit un bot
   let t1, t2;
@@ -1348,14 +1355,19 @@ function drawTeams() {
     const val = n => { const s = list.find(x => x.name === n); return s && s.m ? s.adj_points : base; };
     const botVal = botNeeded ? base * 0.5 : 0;
     const cands = [];
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 600; i++) {
       const sh = shuffle(names), a = sh.slice(0, half), b = sh.slice(half);
+      if (!valid(a, b)) continue;
       cands.push({a, b, diff: Math.abs(a.reduce((x, n) => x + val(n), 0) - b.reduce((x, n) => x + val(n), 0) - botVal)});
     }
     cands.sort((x, y) => x.diff - y.diff);
-    const pick = cands[Math.floor(Math.random() * Math.min(5, cands.length))];
+    const pick = cands[Math.floor(Math.random() * Math.min(5, cands.length))] || {a: names.slice(0, half), b: names.slice(half)};
     t1 = pick.a; t2 = pick.b;
-  } else { t1 = names.slice(0, half); t2 = names.slice(half); }
+  } else {
+    let sh = names;
+    for (let i = 0; i < 200 && !valid(sh.slice(0, half), sh.slice(half)); i++) sh = shuffle(names);
+    t1 = sh.slice(0, half); t2 = sh.slice(half);
+  }
   const bot = botNeeded ? (t1.length < t2.length ? 1 : 2) : 0;
   guardedDraw(cur => {
     const keepMap = cur && cur.map && !drawConsumed(cur.mapAt || cur.at || 0);
@@ -1702,7 +1714,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261027-214601';
+const APP_VERSION = '20261027-215439';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
