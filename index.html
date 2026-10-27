@@ -750,6 +750,7 @@ async function exifDate(file) {
 }
 async function handlePhoto(file) {
   if (!file) return;
+  if (!isAdmin()) { toast('Ajout des photos réservé à l’admin'); return render(); }
   const exif = await exifDate(file);
   const photoAt = exif && exif <= Date.now() + 60000 ? exif : file.lastModified && file.lastModified <= Date.now() + 60000 ? file.lastModified : Date.now();
   let img;
@@ -792,6 +793,7 @@ function renameMap(oldName, value) {
 }
 async function saveDraft() {
   const d = U.draft;
+  if (!isAdmin()) { U.draft = null; render(); return toast('Ajout des photos réservé à l’admin'); }
   const names = d.players.map(p => p.name);
   // Un blocage s'affiche en rouge juste au-dessus du bouton (le toast seul passait inaperçu)
   const block = m => { d.blocker = m; render(); toast(m); const el = $('#dr-blocker'); if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'}); };
@@ -844,6 +846,10 @@ function vSaisie() {
     <input id="ph-cam" type="file" accept="image/*" capture="environment" data-a="photo" hidden>
     <label class="btn block" for="ph-gal" style="justify-content:center">🖼️ Ajouter depuis la galerie photo</label>
     <input id="ph-gal" type="file" accept="image/*" data-a="photo" hidden>`;
+  // Ajout des photos réservé à l'admin (déverrouillé pour la session, comme Réglages)
+  if (!d && !isAdmin()) return `${local}${lastLine ? `<div style="margin-bottom:8px">${lastLine}</div>` : ''}
+  <div class="notice" style="margin-bottom:10px">📸 Seul l’admin peut ajouter les photos de fin de game. Les classements, votes et tirages restent ouverts à tous.</div>
+  ${vLocked('Ajout des photos')}`;
   if (!d) return `${local}
   ${U.sending ? `<div class="notice" style="margin-bottom:10px">⏳ Envoi de la game ${U.sending} en cours… garde l’appli ouverte.</div>` : ''}
   <h2 class="sec">Game ${n} <span>une photo du tableau des scores suffit</span></h2>
@@ -1259,8 +1265,8 @@ async function sha256(s) {
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('codlan:' + s));
   return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
 }
-function vLocked() {
-  return `<h2 class="sec">Réglages verrouillés <span>réservé à l’admin</span></h2>
+function vLocked(title = 'Réglages verrouillés') {
+  return `<h2 class="sec">${title} <span>réservé à l’admin</span></h2>
   <div class="panel grid" style="max-width:420px">
     <label class="lbl" for="adm-code">Code admin</label>
     <input id="adm-code" type="password" inputmode="numeric" autocomplete="off" placeholder="••••••">
@@ -1696,7 +1702,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261024-224918';
+const APP_VERSION = '20261027-214243';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
