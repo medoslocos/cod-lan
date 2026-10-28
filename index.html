@@ -1166,6 +1166,8 @@ function vManches() {
       <div class="row" style="margin-top:10px">
         ${U.confirm === 'del:' + r.id
           ? `<span class="muted">Supprimer la game #${r.n} ?</span>${isAdmin() ? '' : `<input id="del-code" type="password" inputmode="numeric" autocomplete="off" placeholder="Code admin" style="width:130px;min-height:34px;padding:4px 8px" aria-label="Code admin">`}<button class="btn sm danger" data-a="r-del-ok" data-k="${esc(r.id)}">Oui, supprimer</button><button class="btn sm ghost" data-a="cancel">Annuler</button>`
+          : U.confirm === 'edit:' + r.id
+          ? `<span class="muted">Modifier la game #${r.n} :</span><input id="edit-code" type="password" inputmode="numeric" autocomplete="off" placeholder="Code admin" style="width:130px;min-height:34px;padding:4px 8px" aria-label="Code admin"><button class="btn sm primary" data-a="r-edit-ok" data-k="${esc(r.id)}">Valider</button><button class="btn sm ghost" data-a="cancel">Annuler</button>`
           : `<button class="btn sm" data-a="r-edit" data-k="${esc(r.id)}">Modifier</button><button class="btn sm danger" data-a="r-del" data-k="${esc(r.id)}">Supprimer</button>`}
       </div></div>`;
   }).join('')}</div>`;
@@ -1447,7 +1449,19 @@ document.addEventListener('click', e => {
     case 'stk-rm': if (isAdmin()) { delete stickers[k]; render(); write('config/sticker_' + slug(k), d => d.delete()).then(() => toast('Sticker retiré')); } break;
     case 'dr-bot': { const bt = U.draft.bots || (U.draft.bots = {1: 0, 2: 0}); bt[k] = Math.max(0, (bt[k] || 0) + (+b.dataset.d)); render(); break; }
     case 'pick-map': U.selMap = k; render(); break;
-    case 'r-edit': { const r = S.rounds.find(x => x.id === k); U.edit = JSON.parse(JSON.stringify(r)); U.confirm = null; render(); break; }
+    case 'r-edit': case 'r-edit-ok': {
+      // Modifier une game : réservé à l'admin (comme supprimer)
+      const open = () => { const r = S.rounds.find(x => x.id === k); if (!r) return; U.edit = JSON.parse(JSON.stringify(r)); U.confirm = null; render(); };
+      if (isAdmin()) { open(); break; }
+      if (a === 'r-edit') { U.confirm = 'edit:' + k; render(); setTimeout(() => { const i = $('#edit-code'); if (i) i.focus(); }, 50); break; }
+      if (!adminLoaded) return toast('Connexion à la base, réessaie');
+      const inp = $('#edit-code');
+      sha256(inp ? inp.value.trim() : '').then(h => {
+        if (h === adminHash) { ssSet('codlan.admin', h); open(); }
+        else { toast('Code incorrect : modification réservée à l’admin'); if (inp) inp.value = ''; }
+      });
+      break;
+    }
     case 'r-del': U.confirm = 'del:' + k; render(); break;
     case 'r-del-ok': {
       const del = () => { U.confirm = null; S.rounds = S.rounds.filter(r => r.id !== k); render(); write('rounds/' + k, d => d.delete()).then(() => toast('Game supprimée')); };
@@ -1467,6 +1481,7 @@ document.addEventListener('click', e => {
     case 'e-cancel': U.edit = null; render(); break;
     case 'e-save': {
       const e2 = U.edit;
+      if (!isAdmin()) { U.edit = null; render(); return toast('Modification réservée à l’admin'); }
       if (!e2.players.some(p => p.team === 1) || !e2.players.some(p => p.team === 2)) return toast('Il faut au moins un joueur dans chaque équipe');
       const {id, ...body} = e2; U.edit = null;
       if (!(body.score && Number.isInteger(body.score[1]) && Number.isInteger(body.score[2]))) delete body.score;
@@ -1714,7 +1729,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261027-215439';
+const APP_VERSION = '20261028-225008';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
