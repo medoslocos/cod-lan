@@ -609,7 +609,9 @@ function render() {
 
   $('#tabs').innerHTML = TABS.map(([id, l]) => `<button class="tab" role="tab" aria-selected="${U.tab === id}" data-a="tab" data-v="${id}">${id === 'reglages' && !isAdmin() ? '🔒 ' : ''}${l}</button>`).join('');
 
-  const active = document.activeElement, aid = active && active.id;
+  // Pas de re-focus des listes déroulantes : sur iPhone, ça rouvre le menu après un choix
+  const active = document.activeElement, aid = active && active.tagName !== 'SELECT' && active.id;
+  if (active && active.tagName === 'SELECT') active.blur();
   let sel = null; try { sel = aid && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null; } catch (e) {}
   const view = {saisie: vSaisie, classement: vClassement, joueur: vJoueur, map: vMap, manches: vManches, tirage: vTirage, votes: vVotes, reglages: vReglages}[U.tab];
   $('#main').innerHTML = view();
@@ -1768,7 +1770,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261030-011332';
+const APP_VERSION = '20261030-011849';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
