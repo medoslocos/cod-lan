@@ -19,8 +19,12 @@
 /* Lecture du tableau des scores par Gemini (Firebase AI Logic, API Gemini Developer) */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-ai.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app-check.js';
 if (window.FIREBASE_CONFIG) {
-  const ai = getAI(initializeApp(window.FIREBASE_CONFIG, 'ai'), { backend: new GoogleAIBackend() });
+  const aiApp = initializeApp(window.FIREBASE_CONFIG, 'ai');
+  // App Check désormais exigé par Firebase AI Logic : jeton reCAPTCHA Enterprise (clé publique, limitée au domaine github.io)
+  initializeAppCheck(aiApp, { provider: new ReCaptchaEnterpriseProvider('6LceyBQuAAAAAH2GtVWGKV_zQAR9Gwajmnk5wZBR'), isTokenAutoRefreshEnabled: true });
+  const ai = getAI(aiApp, { backend: new GoogleAIBackend() });
   // Offre gratuite Gemini : quota journalier PAR modèle (20/jour pour Flash). On passe au modèle suivant quand l'un est épuisé.
   const MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite'];
   const cfg = { responseMimeType: 'application/json', temperature: 0 };
@@ -1770,7 +1774,7 @@ async function prepareSound() {
 }
 
 /* ---------- Mise à jour de l'appli (utile sur l'écran d'accueil iPhone, sans bouton Actualiser) ---------- */
-const APP_VERSION = '20261107-132522';
+const APP_VERSION = '20261107-132622';
 async function checkUpdate() {
   if (APP_VERSION === 'dev' || !/^https?:/.test(location.protocol)) return;
   try {
